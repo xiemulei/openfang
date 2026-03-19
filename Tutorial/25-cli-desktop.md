@@ -1,7 +1,8 @@
 # 第 25 节：CLI 与 Desktop 应用
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.4.9 (2026-03-19)
 > **核心文件**: `crates/openfang-cli/src/main.rs`, `crates/openfang-desktop/src/lib.rs`
+> **新增功能**: PWA 离线支持、manifest.json、Service Worker
 
 ---
 
@@ -984,6 +985,173 @@ crates/openfang-desktop/
 
 ---
 
+## 18. PWA 离线支持 (v0.4.9 新增)
+
+### 18.1 manifest.json
+
+**文件位置**: `crates/openfang-api/static/manifest.json`
+
+```json
+{
+  "name": "OpenFang Dashboard",
+  "short_name": "OpenFang",
+  "description": "Agent Operating System Dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#10b981",
+  "background_color": "#1f2937",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "categories": ["productivity", "utilities"],
+  "shortcuts": [
+    {
+      "name": "Chat",
+      "url": "/?action=chat",
+      "description": "Start a new chat"
+    },
+    {
+      "name": "Agents",
+      "url": "/?view=agents",
+      "description": "View all agents"
+    }
+  ]
+}
+```
+
+### 18.2 Service Worker (sw.js)
+
+**文件位置**: `crates/openfang-api/static/sw.js`
+
+```javascript
+// Service Worker 缓存关键资源
+const CACHE_NAME = 'openfang-v1';
+const ASSETS = [
+  '/',
+  '/index.html',
+  '/js/i18n.js',
+  '/js/app.js',
+  '/js/pages/agents.js',
+  '/js/pages/chat.js',
+  '/css/styles.css'
+];
+
+// 安装时缓存
+self.addEventListener('install', (e) => {
+  e.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(ASSETS);
+    })
+  );
+});
+
+// 激活时清理旧缓存
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then((keys) => {
+      return Promise.all(
+        keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
+      );
+    })
+  );
+});
+
+// 拦截请求，缓存优先
+self.addEventListener('fetch', (e) => {
+  e.respondWith(
+    caches.match(e.request).then((cached) => {
+      return cached || fetch(e.request);
+    })
+  );
+});
+```
+
+### 18.3 HTML 引用 (index_body.html)
+
+**文件位置**: `crates/openfang-api/static/index_body.html`
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenFang Dashboard</title>
+
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#10b981">
+
+  <!-- Apple PWA 支持 -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+</head>
+<body>
+  <!-- 应用内容 -->
+
+  <script>
+    // 注册 Service Worker
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js')
+          .then((registration) => {
+            console.log('SW registered:', registration.scope);
+          })
+          .catch((error) => {
+            console.log('SW registration failed:', error);
+          });
+      });
+    }
+  </script>
+</body>
+</html>
+```
+
+### 18.4 离线能力
+
+| 功能 | 在线 | 离线 |
+|------|------|------|
+| Dashboard UI | ✅ | ✅ (缓存) |
+| 查看 Agents 列表 | ✅ | ✅ (缓存) |
+| 发送消息 | ✅ | ❌ (队列等待) |
+| 查看历史消息 | ✅ | ✅ (IndexedDB) |
+| 切换语言 | ✅ | ✅ (缓存) |
+
+### 18.5 安装 PWA
+
+**桌面端**:
+- Chrome/Edge: 地址栏右侧出现"安装"图标
+- Firefox: 右键菜单"将此站点作为应用安装"
+
+**移动端**:
+- iOS Safari: 分享 → 添加到主屏幕
+- Android Chrome: 分享 → 安装应用
+
+---
+
+## 19. Desktop 与 PWA 对比
+
+| 特性 | Desktop App | PWA |
+|------|-------------|-----|
+| **安装方式** | .msi/.dmg/.deb | 浏览器安装 |
+| **更新机制** | 自动更新插件 | Service Worker |
+| **系统集成** | 托盘、快捷键、通知 | 有限通知 |
+| **离线能力** | ✅ (嵌入服务器) | ✅ (缓存) |
+| **体积** | ~50MB | ~1MB |
+| **跨平台** | ✅ | ✅ |
+
+---
+
 ## 完成检查清单
 
 - [ ] 掌握 CLI 命令结构和子命令设计
@@ -991,6 +1159,7 @@ crates/openfang-desktop/
 - [ ] 掌握 Tauri Desktop 应用架构
 - [ ] 理解 IPC 命令和系统托盘集成
 - [ ] 掌握自动更新机制
+- [ ] 了解 PWA 离线支持 (v0.4.9 新增)
 
 ---
 
@@ -1015,7 +1184,8 @@ crates/openfang-desktop/
 
 ---
 
-## 下一步
+*创建时间：2026-03-15 (更新于 2026-03-19 v0.4.9)*
+*OpenFang v0.4.9*
 
 恭喜！您已经完成了 OpenFang 25 节完整教程系列。
 
@@ -1030,8 +1200,8 @@ crates/openfang-desktop/
 - ✅ MCP 与 A2A 集成
 - ✅ API 服务器开发
 - ✅ CLI 与 Desktop 应用构建
+- ✅ PWA 离线支持 (v0.4.9 新增)
 
 ---
 
-*创建时间：2026-03-15*
-*OpenFang v0.4.4*
+*OpenFang v0.4.9 — 25 节完整教程系列*

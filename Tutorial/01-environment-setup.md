@@ -31,7 +31,7 @@ tasklist | findstr -i openfang
 
 # 检查 API 健康
 curl -s http://127.0.0.1:4200/api/health
-# {"status":"ok","version":"0.4.0"}
+# {"status":"ok","version":"0.4.9"}
 ```
 
 ### 可用 Endpoints 验证
@@ -46,6 +46,22 @@ curl -s http://127.0.0.1:4200/api/agents
 # 获取 budget 状态
 curl -s http://127.0.0.1:4200/api/budget
 # {"alert_threshold":0.8,"daily_limit":0.0,"daily_spend":0.0,...}
+
+# 重启崩溃/卡住的 Agent (v0.4.9 新增)
+curl -s -X POST http://127.0.0.1:4200/api/agents/{id}/restart
+# {"success": true, "restarted": true}
+
+# 获取配置 Schema (v0.4.9 新增)
+curl -s http://127.0.0.1:4200/api/config/schema
+# 返回 TOML 格式的配置文件结构
+
+# 热更新 Hands 配置 (v0.4.9 新增)
+curl -s -X POST http://127.0.0.1:4200/api/hands/upsert \
+  -H "Content-Type: application/json" \
+  -d '{"hand_id": "...", "config": {...}}'
+
+# 获取事件流 (SSE, v0.4.9 新增)
+curl -s http://127.0.0.1:4200/api/comms/events/stream
 ```
 
 ---
@@ -59,14 +75,14 @@ D:\Rust\openfang\crates\
 ├── openfang-runtime    # Agent 循环、LLM 驱动、工具、WASM 沙箱
 ├── openfang-skills     # 60 个内置技能
 ├── openfang-hands      # 7 个自主 Hands
-├── openfang-channels   # 40 个消息渠道适配器
+├── openfang-channels   # 42+ 消息渠道适配器 (v0.4.9 新增企业微信、钉钉流式)
 ├── openfang-extensions # MCP、OAuth2、凭证管理
 ├── openfang-wire       # OFP P2P 协议
 ├── openfang-kernel     # 编排、调度、预算、RBAC
-├── openfang-api        # 140+ REST/WS/SSE 端点
+├── openfang-api        # 140+ REST/WS/SSE 端点 (v0.4.9 新增重启 Agent 等)
 ├── openfang-cli        # CLI 工具
 ├── openfang-migrate    # 从 OpenClaw 等迁移
-└── openfang-desktop    # Tauri 桌面应用
+└── openfang-desktop    # Tauri 桌面应用 (v0.4.9 支持 PWA)
 ```
 
 ---
@@ -213,8 +229,13 @@ impl OpenFangKernel {
 |----------|--------|------|
 | `/api/health` | GET | 健康检查 |
 | `/api/agents` | GET | 获取所有 agents |
-| `/api/budget` | GET | 获取预算状态 |
+| `/api/agents/{id}/restart` | POST | 重启崩溃/卡住的 Agent (v0.4.9 新增) |
+| `/api/agents/{id}/model` | PUT | 切换 Agent 的 Provider/模型 |
+| `/api/budget` | GET/PUT | 获取/更新预算状态 |
 | `/api/budget/agents` | GET | 按 agent 的成本排名 |
+| `/api/hands/upsert` | POST | 热更新 Hands 配置 (v0.4.9 新增) |
+| `/api/config/schema` | GET | 返回配置 TOML schema (v0.4.9 新增) |
+| `/api/comms/events/stream` | GET | SSE 流式事件推送 (v0.4.9 新增) |
 
 ---
 
@@ -233,11 +254,16 @@ impl OpenFangKernel {
 
 - [x] Rust 环境已验证
 - [x] Daemon 正在运行 (PID 24544)
-- [x] API 健康检查通过 (v0.4.0)
+- [x] API 健康检查通过 (v0.4.9)
 - [x] 2 个 agents 可用
 - [x] Dashboard 可访问 (http://127.0.0.1:4200)
 - [x] 理解启动流程
 - [x] 知道核心代码位置
+- [x] 了解 v0.4.9 新增功能：
+  - [ ] 企业微信、钉钉渠道适配器
+  - [ ] Agent 重启接口
+  - [ ] PWA 离线支持
+  - [ ] 图片处理流水线
 
 ---
 
@@ -247,5 +273,111 @@ impl OpenFangKernel {
 
 ---
 
-*创建时间：2026-03-14*
-*OpenFang v0.4.0*
+## v0.4.9 新增功能速览
+
+### 1. 企业微信渠道适配器
+
+```rust
+// crates/openfang-channels/src/wecom.rs
+// 691 行完整实现，支持:
+// - 消息收发
+// - Token 自动刷新
+// - AES-CBC 解密
+// -  webhook 接收
+
+// 配置示例 (~/.openfang/config.toml)
+[wecom]
+corp_id = "your_corp_id"
+agent_id = "1000001"
+secret = "your_secret"
+token = "webhook_token"
+encoding_aes_key = "your_aes_key"
+```
+
+### 2. 钉钉流式适配器
+
+```rust
+// crates/openfang-channels/src/dingtalk_stream.rs
+// 600 行实现，支持:
+// - 卡片消息流式处理
+// - 交互式按钮
+// - 消息状态回调
+```
+
+### 3. Agent 重启接口
+
+```bash
+# 重启崩溃或卡住的 Agent
+curl -X POST http://127.0.0.1:4200/api/agents/{id}/restart
+
+# 前端调用 (agents.js)
+async restartAgent() {
+  await OpenFangAPI.post(`/api/agents/${this.agent.id}/restart`);
+  OpenFangToast.success('Agent restarted');
+}
+```
+
+### 4. PWA 离线支持
+
+```json
+// crates/openfang-api/static/manifest.json
+{
+  "name": "OpenFang Dashboard",
+  "short_name": "OpenFang",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#10b981",
+  "background_color": "#1f2937"
+}
+```
+
+```javascript
+// crates/openfang-api/static/sw.js
+// Service Worker 缓存关键资源:
+// - index.html
+// - js/i18n.js
+// - js/app.js
+// - css styles
+```
+
+### 5. 图片处理流水线
+
+```rust
+// ContentBlock::Image 增强
+pub enum ContentBlock {
+    Image {
+        data: Vec<u8>,
+        mime_type: String, // image/png, image/jpeg, image/gif, image/webp
+        base64_inline: bool,
+    },
+    // ...
+}
+
+// 临时目录存储
+const UPLOADS_DIR: &str = "/tmp/openfang_uploads";
+```
+
+### 6. 前端国际化
+
+```javascript
+// js/i18n.js - 完整中英文双语
+const i18n = {
+  'zh-CN': {
+    'chat': {
+      'select_agent': '选择智能体开始对话',
+      'type_placeholder': '输入消息... (/ 触发命令)'
+    }
+  },
+  'en-US': {
+    'chat': {
+      'select_agent': 'Select an agent to start chatting',
+      'type_placeholder': 'Message OpenFang... (/ for commands)'
+    }
+  }
+};
+```
+
+---
+
+*创建时间：2026-03-14 (更新于 2026-03-19 v0.4.9)*
+*OpenFang v0.4.9*

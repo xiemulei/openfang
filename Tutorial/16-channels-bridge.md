@@ -1,11 +1,13 @@
 # 第 16 节：Channel 系统 — 消息渠道
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.4.9 (2026-03-19)
 > **核心文件**:
 > - `crates/openfang-channels/src/types.rs`
 > - `crates/openfang-channels/src/bridge.rs`
 > - `crates/openfang-channels/src/router.rs`
 > - `crates/openfang-channels/src/formatter.rs`
+> - `crates/openfang-channels/src/wecom.rs` (v0.4.9 新增)
+> - `crates/openfang-channels/src/dingtalk_stream.rs` (v0.4.9 新增)
 
 ## 学习目标
 
@@ -13,7 +15,7 @@
 - [ ] 掌握 ChannelMessage 统一消息结构
 - [ ] 理解 AgentRouter 路由机制
 - [ ] 掌握 OutputFormat 消息格式化
-- [ ] 了解 40 个渠道适配器架构
+- [ ] 了解 42+ 渠道适配器架构 (v0.4.9 新增企业微信、钉钉流式)
 
 ---
 
@@ -760,7 +762,7 @@ pub fn split_message(text: &str, max_len: usize) -> Vec<&str> {
 | Revolt | `revolt.rs` |
 | Viber | `viber.rs` |
 
-### Wave 3 — 企业渠道（7 个）
+### Wave 3 — 企业渠道（9 个，v0.4.9 更新）
 
 | 适配器 | 模块 |
 |--------|------|
@@ -773,11 +775,13 @@ pub fn split_message(text: &str, max_len: usize) -> Vec<&str> {
 | Threema | `threema.rs` |
 | Twist | `twist.rs` |
 | Webex | `webex.rs` |
+| **企业微信** | `wecom.rs` (v0.4.9 新增) |
 
-### Wave 4 — 小众渠道（7 个）
+### Wave 4 — 小众渠道（8 个，v0.4.9 更新）
 
 | 适配器 | 模块 |
 |--------|------|
+| **钉钉流式** | `dingtalk_stream.rs` (v0.4.9 新增) |
 | Dingtalk | `dingtalk.rs` |
 | Discourse | `discourse.rs` |
 | Gitter | `gitter.rs` |
@@ -799,7 +803,167 @@ pub fn split_message(text: &str, max_len: usize) -> Vec<&str> {
 
 ---
 
-## 15. TelegramAdapter 示例
+## 15. WeComAdapter — 企业微信适配器 (v0.4.9 新增)
+
+### 文件位置
+`crates/openfang-channels/src/wecom.rs` (691 行)
+
+### 核心结构
+
+```rust
+// wecom.rs:1-50
+pub struct WeComAdapter {
+    corp_id: String,
+    agent_id: String,
+    secret: Zeroizing<String>,
+    token: String,
+    encoding_aes_key: Zeroizing<String>,
+    client: reqwest::Client,
+    access_token: Arc<RwLock<Option<String>>>,
+    token_expires_at: Arc<RwLock<Option<i64>>>,
+}
+```
+
+### Token 管理
+
+```rust
+// 获取访问 Token
+const WECOM_TOKEN_URL: &str = "https://qyapi.weixin.qq.com/cgi-bin/gettoken";
+
+async fn refresh_access_token(&self) -> Result<String, String> {
+    let url = format!(
+        "{}?corpid={}&corpsecret={}",
+        WECOM_TOKEN_URL, self.corp_id, self.secret
+    );
+
+    let resp = self.client.get(&url).send().await?;
+    let json: serde_json::Value = resp.json().await?;
+
+    // 缓存 Token，过期前自动刷新
+    let access_token = json["access_token"].as_str().unwrap().to_string();
+    let expires_in = json["expires_in"].as_i64().unwrap_or(7200);
+
+    *self.access_token.write().await = Some(access_token.clone());
+    *self.token_expires_at.write().await = Some(current_timestamp() + expires_in - 300);
+
+    Ok(access_token)
+}
+```
+
+### 消息发送
+
+```rust
+// 发送文本消息
+const WECOM_SEND_URL: &str = "https://qyapi.weixin.qq.com/cgi-bin/message/send";
+
+pub async fn send_text(&self, to_user: &str, content: &str) -> Result<(), String> {
+    let access_token = self.get_access_token().await?;
+
+    let payload = serde_json::json!({
+        "touser": to_user,
+        "msgtype": "text",
+        "agentid": self.agent_id,
+        "text": {
+            "content": content
+        },
+        "safe": 0
+    });
+
+    let url = format!("{}?access_token={}", WECOM_SEND_URL, access_token);
+    self.client.post(&url).json(&payload).send().await?;
+
+    Ok(())
+}
+```
+
+### AES-CBC 解密
+
+```rust
+// 解密微信加密消息
+fn decrypt_aes_cbc(key: &[u8], encrypted_base64: &str) -> Result<Vec<u8>, String> {
+    let key = GenericKey::<Aes256, _>::from_slice(key);
+    let encrypted = base64_decode(encrypted_base64)?;
+
+    // PKCS#7 去填充
+    let cipher = cbc::Decryptor::<Aes256CBC>::new(&key, &iv);
+    let decrypted = cipher.decrypt_padded_vec_mut::<Pkcs7>(&encrypted)?;
+
+    Ok(decrypted)
+}
+```
+
+### 配置示例
+
+```toml
+# ~/.openfang/config.toml
+[wecom]
+corp_id = "ww1234567890"
+agent_id = "1000001"
+secret = "your-agent-secret"
+token = "webhook-token"
+encoding_aes_key = "your-aes-key-here"
+```
+
+---
+
+## 16. DingTalkStreamAdapter — 钉钉流式适配器 (v0.4.9 新增)
+
+### 文件位置
+`crates/openfang-channels/src/dingtalk_stream.rs` (600 行)
+
+### 核心特性
+
+- **流式处理**: 支持钉钉卡片消息的流式更新
+- **交互式卡片**: 支持按钮、表单等交互元素
+- **回调机制**: 处理用户点击、提交等事件
+
+### 卡片消息示例
+
+```rust
+// 发送交互式卡片
+pub async fn send_card(&self, to_user: &str, card: DingTalkCard) -> Result<(), String> {
+    let access_token = self.get_access_token().await?;
+
+    let payload = serde_json::json!({
+        "user_id": to_user,
+        "msgtype": "interactive_card",
+        "card": {
+            "card_type": card.card_type,
+            "card_content": card.content,
+            "actions": card.actions
+        }
+    });
+
+    // 发送卡片
+    let resp = self.client.post(&send_url)
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
+
+### 回调处理
+
+```rust
+// 处理卡片回调
+pub async fn handle_callback(
+    &self,
+    callback: DingTalkCallback
+) -> Result<CallbackResponse, String> {
+    match callback.action_type.as_str() {
+        "click" => self.handle_click(callback).await,
+        "submit" => self.handle_submit(callback).await,
+        _ => Err("Unknown action type".into()),
+    }
+}
+```
+
+---
+
+## 17. TelegramAdapter 示例
 
 ### 文件位置
 `crates/openfang-channels/src/telegram.rs`

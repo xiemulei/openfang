@@ -1,7 +1,8 @@
 # 第 24 节：API 服务 — REST/WS 端点
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.4.9 (2026-03-19)
 > **核心文件**: `crates/openfang-api/src/server.rs`, `crates/openfang-api/src/routes.rs`
+> **新增端点**: `/api/agents/{id}/restart`, `/api/hands/upsert`, `/api/config/schema`, `/api/comms/events/stream`
 
 ## 学习目标
 
@@ -10,6 +11,7 @@
 - [ ] 理解 OpenAI 兼容 API 的实现
 - [ ] 掌握 SSE 流式和 WebSocket 实时通信
 - [ ] 理解 GCRA 速率限制和认证机制
+- [ ] 了解 v0.4.9 新增端点 (Agent 重启、Hands 热更新等)
 
 ---
 
@@ -170,6 +172,7 @@ pub async fn build_router(
 | `POST` | `/api/agents/{id}/stop` | 停止 Agent | 10 |
 | `PUT` | `/api/agents/{id}/update` | 更新 Agent | 10 |
 | `GET` | `/api/agents/{id}/files/{filename}` | 文件服务 | 2 |
+| `POST` | `/api/agents/{id}/restart` | 重启 Agent (v0.4.9 新增) | 10 |
 
 ### 2.3 Memory 端点
 
@@ -419,6 +422,313 @@ pub async fn build_router(
 | 方法 | 路径 | 功能 |
 |------|------|------|
 | `POST` | `/api/shutdown` | 关闭服务 |
+
+---
+
+## 3. v0.4.9 新增端点详解
+
+### 3.1 POST /api/agents/{id}/restart — 重启 Agent
+
+**场景**: 当 Agent 崩溃、卡住或无响应时，无需手动停止再启动。
+
+```rust
+// crates/openfang-api/src/routes.rs
+pub async fn restart_agent(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let agent_id = &id;
+
+    // 1. 取消运行中的任务
+    let was_running = state.kernel.stop_agent_run(agent_id).unwrap_or(false);
+
+    // 2. 重置状态为 Running
+    let _ = state.kernel.registry.set_state(
+        agent_id,
+        openfang_types::agent::AgentState::Running
+    );
+
+    // 3. 返回成功响应
+    Json(json!({
+        "success": true,
+        "restarted": true,
+        "was_running": was_running
+    }))
+}
+```
+
+**使用示例**:
+```bash
+# 重启卡住的 Agent
+curl -X POST http://127.0.0.1:4200/api/agents/agent-1/restart
+
+# 返回
+{"success":true,"restarted":true,"was_running":false}
+```
+
+**前端调用** (agents.js):
+```javascript
+async restartAgent() {
+  try {
+    await OpenFangAPI.post(`/api/agents/${this.agent.id}/restart`);
+    OpenFangToast.success('Agent restarted');
+    this.loadAgents(); // 刷新列表
+  } catch (e) {
+    OpenFangToast.error('Failed to restart: ' + e.message);
+  }
+}
+```
+
+---
+
+### 3.2 POST /api/hands/upsert — 热更新 Hands 配置
+
+**场景**: 无需重启服务，动态创建或更新 Hands 配置。
+
+```rust
+// crates/openfang-api/src/routes.rs
+pub async fn upsert_hand(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let hand_id = payload["hand_id"].as_str().ok_or("Missing hand_id")?;
+    let config = payload["config"].as_object().ok_or("Missing config")?;
+
+    // 调用 kernel 的 upsert_hand 方法
+    match state.kernel.upsert_hand(hand_id, config).await {
+        Ok(created) => Json(json!({
+            "success": true,
+            "created": created,
+            "hand_id": hand_id
+        })),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(json!({
+            "error": e.to_string()
+        }))),
+    }
+}
+```
+
+**使用示例**:
+```bash
+# 创建/更新 Hand
+curl -X POST http://127.0.0.1:4200/api/hands/upsert \
+  -H "Content-Type: application/json" \
+  -d '{
+    "hand_id": "researcher",
+    "config": {
+      "enabled": true,
+      "auto_start": true,
+      "max_instances": 5
+    }
+  }'
+```
+
+---
+
+### 3.3 GET /api/config/schema — 获取配置 Schema
+
+**场景**: 前端动态生成配置表单，验证用户输入。
+
+```rust
+// crates/openfang-api/src/routes.rs
+pub async fn get_config_schema(
+    State(_state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    // 返回 TOML 格式的 schema 定义
+    let schema = r#"
+[default_model]
+provider = "anthropic|openai|groq|..."
+model = "model-name"
+api_key_env = "API_KEY_ENV_VAR"
+
+[memory]
+decay_rate = 0.05
+
+[network]
+listen_addr = "127.0.0.1:4200"
+
+[wecom]
+corp_id = "your_corp_id"
+agent_id = "1000001"
+secret = "your_secret"
+token = "webhook_token"
+encoding_aes_key = "your_aes_key"
+"#;
+
+    (StatusCode::OK, schema)
+}
+```
+
+**使用示例**:
+```bash
+curl -s http://127.0.0.1:4200/api/config/schema
+# 返回 TOML schema 供前端解析
+```
+
+---
+
+### 3.4 GET /api/comms/events/stream — SSE 事件流
+
+**场景**: 前端实时接收 Agent 通信事件，更新 UI。
+
+```rust
+// crates/openfang-api/src/routes.rs
+pub async fn comms_events_stream(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    use axum::response::sse::{Sse, Event};
+    use futures::stream::Stream;
+
+    // 订阅事件总线
+    let (tx, rx) = tokio::sync::mpsc::channel(100);
+    let _subscription = state.kernel.comms_bus.subscribe(move |event| {
+        let _ = tx.try_send(event);
+    });
+
+    // 流式返回事件
+    let stream = ReceiverStream::new(rx).map(|event| {
+        Ok::<Event, Infallible>(
+            Event::default().data(serde_json::to_string(&event).unwrap())
+        )
+    });
+
+    Sse::new(stream)
+}
+```
+
+**使用示例**:
+```bash
+# 监听事件流
+curl -N http://127.0.0.1:4200/api/comms/events/stream
+
+# 输出
+data: {"type":"agent_message","agent_id":"agent-1","content":"Hello"}
+data: {"type":"task_completed","task_id":"task-123","result":"success"}
+```
+
+---
+
+### 3.5 PWA 支持 — manifest.json 和 sw.js
+
+**文件位置**:
+- `crates/openfang-api/static/manifest.json`
+- `crates/openfang-api/static/sw.js`
+
+**manifest.json**:
+```json
+{
+  "name": "OpenFang Dashboard",
+  "short_name": "OpenFang",
+  "description": "Agent Operating System Dashboard",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#10b981",
+  "background_color": "#1f2937",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
+```
+
+**sw.js** (Service Worker):
+```javascript
+// Service Worker 缓存关键资源
+const CACHE_NAME = 'openfang-v1';
+const ASSETS = [
+  '/',
+  '/index.html',
+  '/js/i18n.js',
+  '/js/app.js',
+  '/css/styles.css'
+];
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE_NAME).then(c => c.addAll(ASSETS)));
+});
+
+self.addEventListener('fetch', (e) => {
+  e.respondWith(
+    caches.match(e.request).then(r => r || fetch(e.request))
+  );
+});
+```
+
+**HTML 引用** (index_body.html):
+```html
+<link rel="manifest" href="/manifest.json">
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js');
+  }
+</script>
+```
+
+---
+
+### 3.6 图片处理流水线
+
+**场景**: 用户上传图片，Agent 识别并回复。
+
+```rust
+// crates/openfang-api/src/routes.rs - 图片上传处理
+pub async fn upload_file(
+    State(state): State<Arc<AppState>>,
+    Path(agent_id): Path<String>,
+    mut multipart: Multipart,
+) -> Result<Json<Value>, ApiError> {
+    const UPLOADS_DIR: &str = "/tmp/openfang_uploads";
+
+    while let Some(field) = multipart.next_field().await? {
+        let data = field.bytes().await?;
+
+        // 保存为 base64
+        let base64_data = base64_encode(&data);
+        let mime_type = field.content_type().unwrap_or("image/png");
+
+        // 创建 ContentBlock::Image
+        let image_block = ContentBlock::Image {
+            data: data.to_vec(),
+            mime_type: mime_type.to_string(),
+            base64_inline: true,
+        };
+
+        // 发送到 Agent
+        let response = state.kernel
+            .send_message(&agent_id, vec![image_block])
+            .await?;
+    }
+
+    Ok(Json(json!({ "success": true })))
+}
+```
+
+**前端调用**:
+```javascript
+async uploadImage(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const resp = await fetch(`/api/agents/${agentId}/upload`, {
+    method: 'POST',
+    body: formData
+  });
+
+  // 图片直接显示在消息气泡中
+  const imageUrl = URL.createObjectURL(file);
+  this.messages.push({ role: 'user', content: imageUrl, type: 'image' });
+}
+```
+
+---
 | `GET` | `/api/commands` | 列出命令 |
 | `GET` | `/api/templates` | 列出模板 |
 | `GET` | `/api/templates/{name}` | 获取模板 |
@@ -436,6 +746,9 @@ pub async fn build_router(
 | `POST` | `/api/pairing/notify` | 配对通知 |
 
 ---
+
+*创建时间：2026-03-15 (更新于 2026-03-19 v0.4.9)*
+*OpenFang v0.4.9*
 
 ## 3. GCRA 速率限制
 

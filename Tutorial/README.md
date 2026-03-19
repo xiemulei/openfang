@@ -1,8 +1,8 @@
 # OpenFang 学习笔记 — 25 节完整教程
 
-> **版本**: v0.4.4 (2026-03-16)
+> **版本**: v0.4.9 (2026-03-19)
 > **状态**: ✅ 全部完成
-> **总计**: 14 Crates, 137K+ LOC, 1767+ Tests, 25 节教程
+> **总计**: 14 Crates, 145K+ LOC, 1767+ Tests, 25 节教程
 
 ---
 
@@ -105,6 +105,89 @@
 | 2026-03-15 | 初始 10 节计划 | 全部 |
 | 2026-03-15 | 扩展为 20 节详细计划 | 本文件 |
 | 2026-03-16 | 添加 Hands 系统第 14-15 节、更新版本到 v0.4.4 | 14-hands-config.md, 15-hands-lifecycle.md |
+| 2026-03-19 | 更新到 v0.4.9: 新增企业微信渠道、图片生成流水线、Agent 重启等 | 本文件、01/16/24 节 |
+
+---
+
+## v0.4.4 → v0.4.9 版本变更摘要
+
+### 新增功能
+
+#### 渠道系统 (Channels)
+- **企业微信适配器** (`crates/openfang-channels/src/wecom.rs`): 691 行完整实现，支持消息收发、token 自动刷新
+- **钉钉流式适配器** (`crates/openfang-channels/src/dingtalk_stream.rs`): 600 行，支持钉钉卡片消息流式处理
+- **飞书增强** (`crates/openfang-channels/src/feishu.rs`): +914 行，支持更多消息类型
+- **邮件渠道改进**: 支持 HTML 邮件和附件
+- **Telegram 改进**: 支持更多消息格式和错误恢复
+- **Mastodon 轮询修复**: 更稳定的长轮询机制
+
+#### API 端点
+- **POST /api/agents/{id}/restart**: 重启崩溃/卡住的 Agent，重置状态并取消运行任务
+- **POST /api/agents/{id}/start**: 启动 Agent (别名重启)
+- **POST /api/hands/upsert**: Hands 配置热更新
+- **GET /api/config/schema**: 返回配置 TOML schema 供前端使用
+- **GET /api/comms/events/stream**: SSE 流式事件推送
+
+#### 图片处理流水线
+- **ContentBlock::Image 增强**: 支持更多媒体类型 (png, jpeg, gif, webp)
+- **Base64 内联编码**: 图片直接嵌入消息
+- **临时目录存储**: 自动管理 `/tmp/openfang_uploads`
+- **前端渲染**: 消息气泡内直接显示图片缩略图
+
+#### 前端改进
+- **PWA 支持**: 新增 `manifest.json` 和 `sw.js` 服务工作者
+- **Agent 详情页**: 支持切换 Provider (不局限于切换模型)
+- **国际化 (i18n)**: 完整的中文/英文双语切换
+- **文件上传**: 拖拽上传、图片预览
+
+### Bug 修复
+
+| 修复内容 | 影响范围 |
+|----------|----------|
+| Agent 响应空值保护 | 防止前端显示空白消息 |
+| Session 消息加载 | ToolResult 正确关联到工具调用 |
+| Chromium 沙箱 | Root 环境下添加 `--no-sandbox` |
+| Slack 链接预览 | 自动展开 unfurl 链接 |
+| 工具错误引导 | 错误消息包含修复建议 |
+| Agent 重命名 | 修复 ID 不一致问题 |
+| 异步 Session 保存 | 防止阻塞主线程 |
+| Docker 构建参数 | 支持多平台构建 |
+| Codex ID Token | OAuth2 令牌刷新逻辑 |
+
+### 配置变更
+
+#### Config.toml 新增字段
+```toml
+# 企业微信配置
+[wecom]
+corp_id = "your_corp_id"
+agent_id = "1000001"
+secret = "your_secret"
+token = "webhook_token"
+encoding_aes_key = "your_aes_key"
+
+# 图片上传配置
+[uploads]
+max_size_mb = 5
+temp_dir = "/tmp/openfang_uploads"
+```
+
+### 依赖更新
+- `mailparse` → 0.16.1 (更好的 MIME 支持)
+- `tokio-tungstenite` → 0.28.0 (WebSocket 改进)
+- `wasmtime` → 42.0.1 (WASM 沙箱升级)
+- `ratatui` → 0.30.0 (TUI 界面更新)
+- `rusqlite` → 0.38.0 (SQLite 绑定更新)
+
+---
+
+### 学习路线调整
+
+根据新版本，建议补充以下内容:
+1. **企业微信集成** (第 16 节补充)
+2. **图片处理流程** (第 10 节补充)
+3. **Agent 调试与重启** (第 7 节补充)
+4. **PWA 离线支持** (第 25 节补充)
 
 ---
 
@@ -139,6 +222,6 @@
 
 ---
 
-*OpenFang v0.4.4 — 25 节完整教程系列*
-*创建时间：2026-03-16*
+*OpenFang v0.4.9 — 25 节完整教程系列*
+*创建时间：2026-03-16 (更新于 2026-03-19)*
 *🐍 OpenFang — Open-source Agent Operating System*

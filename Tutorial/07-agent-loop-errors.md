@@ -1,10 +1,11 @@
 # 第 7 节：Agent 循环 — 错误处理
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.4.9 (2026-03-19)
 > **核心文件**:
 > - `crates/openfang-runtime/src/llm_errors.rs`
 > - `crates/openfang-runtime/src/auth_cooldown.rs`
 > - `crates/openfang-runtime/src/agent_loop.rs` (retry logic)
+> - `crates/openfang-api/src/routes.rs` (restart_agent endpoint)
 
 ## 学习目标
 
@@ -12,6 +13,7 @@
 - [ ] 掌握 `call_with_retry` 重试逻辑
 - [ ] 理解 ProviderCooldown 断路器机制
 - [ ] 掌握指数退避 + Jitter 延迟策略
+- [ ] 了解 Agent 重启恢复机制 (v0.4.9 新增)
 
 ---
 
@@ -700,12 +702,149 @@ HalfOpen → Open (probe 失败)
 
 ---
 
+## 10. Agent 重启恢复机制 (v0.4.9 新增)
+
+### 10.1 应用场景
+
+当 Agent 出现以下情况时，需要手动或自动重启：
+
+| 场景 | 说明 | 检测方式 |
+|------|------|----------|
+| **长时间无响应** | 超过健康检查阈值 | `HealthCheckFailed` 事件 |
+| **LLM 连续失败** | 断路器打开，无法恢复 | `ProviderCooldown` 状态 |
+| **工具执行卡住** | 工具调用超时未返回 | 任务执行时长监控 |
+| **内存溢出** | 上下文过大无法压缩 | `ContextOverflow` 错误 |
+| **状态异常** | 状态机进入非法状态 | 状态一致性检查 |
+
+### 10.2 API 端点
+
+```rust
+// crates/openfang-api/src/routes.rs
+pub async fn restart_agent(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let agent_id = &id;
+
+    // 1. 取消运行中的任务
+    let was_running = state.kernel.stop_agent_run(agent_id).unwrap_or(false);
+
+    // 2. 重置状态为 Running
+    let _ = state.kernel.registry.set_state(
+        agent_id,
+        openfang_types::agent::AgentState::Running
+    );
+
+    // 3. 清除错误计数器
+    // 清除断路器状态
+    // 重置会话上下文（可选）
+
+    Json(json!({
+        "success": true,
+        "restarted": true,
+        "was_running": was_running
+    }))
+}
+```
+
+### 10.3 重启流程
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  1. 检测到 Agent 异常                                        │
+│     - 健康检查失败                                            │
+│     - 用户手动触发                                            │
+│     - 监控告警                                                │
+└─────────────────────────────────────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  2. 调用 /api/agents/{id}/restart                           │
+│     - POST http://127.0.0.1:4200/api/agents/{id}/restart   │
+└─────────────────────────────────────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  3. 内核处理                                                 │
+│     - stop_agent_run(): 取消当前任务                        │
+│     - set_state(Running): 重置状态机                        │
+│     - 清除错误计数/断路器状态                                │
+└─────────────────────────────────────────────────────────────┘
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│  4. 恢复运行                                                 │
+│     - Agent 循环继续执行                                     │
+│     - 接收新消息并处理                                        │
+│     - 断路器重新闭合                                          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 10.4 前端实现
+
+```javascript
+// crates/openfang-api/static/js/pages/agents.js
+async restartAgent(agentId) {
+  try {
+    const resp = await OpenFangAPI.post(`/api/agents/${agentId}/restart`);
+
+    if (resp.success) {
+      OpenFangToast.success(`Agent ${agentId} restarted successfully`);
+      this.loadAgents(); // 刷新列表
+    } else {
+      OpenFangToast.error(`Restart failed: ${resp.error}`);
+    }
+  } catch (e) {
+    OpenFangToast.error(`Restart failed: ${e.message}`);
+  }
+}
+```
+
+### 10.5 自动重启策略
+
+```rust
+// 可选：配置自动重启
+#[derive(Clone, Serialize, Deserialize)]
+pub struct AgentRecoveryConfig {
+    /// 启用自动重启
+    pub auto_restart: bool,
+    /// 健康检查失败后自动重启
+    pub restart_on_health_check_failure: bool,
+    /// 连续失败次数阈值
+    pub max_consecutive_failures: u32,
+    /// 重启前冷却时间（秒）
+    pub restart_cooldown_secs: u64,
+    /// 最大重启尝试次数（防止无限重启）
+    pub max_restart_attempts: u32,
+}
+
+impl Default for AgentRecoveryConfig {
+    fn default() -> Self {
+        Self {
+            auto_restart: true,
+            restart_on_health_check_failure: true,
+            max_consecutive_failures: 3,
+            restart_cooldown_secs: 60,
+            max_restart_attempts: 5,
+        }
+    }
+}
+```
+
+### 10.6 最佳实践
+
+1. **手动重启优先**: 生产环境建议手动确认重启，避免误操作
+2. **重启前保存状态**: 重要数据在重启前持久化到数据库
+3. **限制重启频率**: 配置 `restart_cooldown_secs` 防止频繁重启
+4. **监控重启事件**: 记录 `AgentRestarted` 事件到审计日志
+5. **根因分析**: 连续重启应触发告警，需要调查根本原因
+
+---
+
 ## 完成检查清单
 
 - [ ] 理解 LLM 错误分类的 8 个类别
 - [ ] 掌握 `call_with_retry` 重试逻辑
 - [ ] 理解 ProviderCooldown 断路器机制
 - [ ] 掌握指数退避 + Jitter 延迟策略
+- [ ] 了解 Agent 重启恢复机制 (v0.4.9 新增)
 
 ---
 
@@ -715,5 +854,5 @@ HalfOpen → Open (probe 失败)
 
 ---
 
-*创建时间：2026-03-15*
-*OpenFang v0.4.4*
+*创建时间：2026-03-15 (更新于 2026-03-19 v0.4.9)*
+*OpenFang v0.4.9*
