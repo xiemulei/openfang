@@ -1,11 +1,12 @@
 # 第 16 节：Channel 系统 — 消息渠道
 
-> **版本**: v0.4.9 (2026-03-19)
+> **版本**: v0.5.1 (2026-03-20)
 > **核心文件**:
 > - `crates/openfang-channels/src/types.rs`
 > - `crates/openfang-channels/src/bridge.rs`
 > - `crates/openfang-channels/src/router.rs`
 > - `crates/openfang-channels/src/formatter.rs`
+> - `crates/openfang-channels/src/matrix.rs` (v0.5.1: 新增 auto_accept_invites 配置)
 > - `crates/openfang-channels/src/wecom.rs` (v0.4.9 新增)
 > - `crates/openfang-channels/src/dingtalk_stream.rs` (v0.4.9 新增)
 
@@ -743,7 +744,7 @@ pub fn split_message(text: &str, max_len: usize) -> Vec<&str> {
 | Slack | `slack.rs` | Socket Mode / Events API |
 | Discord | `discord.rs` | Gateway WebSocket |
 | Signal | `signal.rs` | signal-cli RPC |
-| Matrix | `matrix.rs` | Client-Server API |
+| Matrix | `matrix.rs` | Client-Server API (v0.5.1: 新增 auto_accept_invites 配置) |
 | Email | `email.rs` | IMAP/SMTP |
 | Teams | `teams.rs` | Graph API |
 | Mattermost | `mattermost.rs` | WebSocket API |
@@ -1176,13 +1177,134 @@ split_message() (如需要)
 
 ---
 
+## 18. v0.5.1 新增：Matrix auto_accept_invites 配置
+
+### 配置项
+
+v0.5.1 为 Matrix 渠道添加了 `auto_accept_invites` 配置项，允许控制是否自动接受房间邀请。
+
+**配置文件位置**: `~/.openfang/config.toml`
+
+```toml
+[channels.matrix]
+enabled = true
+home_server = "matrix.org"
+user_id = "@bot:matrix.org"
+access_token_env = "MATRIX_ACCESS_TOKEN"
+allowed_rooms = []  # 留空表示允许所有房间
+auto_accept_invites = false  # v0.5.1 新增，默认 false
+default_agent = "assistant"
+```
+
+### 配置说明
+
+| 值 | 说明 |
+|-----|------|
+| `true` | 自动接受所有房间邀请 |
+| `false` | 仅响应已配置 `allowed_rooms` 中的房间 |
+
+### 代码实现
+
+**MatrixConfig 结构** (`crates/openfang-types/src/config.rs:1861-1883`):
+
+```rust
+pub struct MatrixConfig {
+    pub home_server: String,
+    pub user_id: String,
+    pub access_token_env: String,
+    pub allowed_rooms: Vec<String>,
+    pub default_agent: Option<String>,
+    /// Whether to auto-accept room invites (default: false).
+    #[serde(default)]
+    pub auto_accept_invites: bool,  // v0.5.1 新增
+    pub overrides: ChannelOverrides,
+}
+
+impl Default for MatrixConfig {
+    fn default() -> Self {
+        Self {
+            home_server: "matrix.org".to_string(),
+            user_id: "@bot:matrix.org".to_string(),
+            access_token_env: "MATRIX_ACCESS_TOKEN".to_string(),
+            allowed_rooms: vec![],
+            default_agent: None,
+            auto_accept_invites: false,  // 默认不自动接受
+            overrides: ChannelOverrides::default(),
+        }
+    }
+}
+```
+
+**MatrixAdapter 构造函数** (`crates/openfang-channels/src/matrix.rs`):
+
+```rust
+impl MatrixAdapter {
+    pub fn new(
+        home_server: String,
+        user_id: String,
+        access_token: String,
+        allowed_rooms: Vec<String>,
+        auto_accept_invites: bool,  // v0.5.1 新增参数
+    ) -> Self {
+        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        Self {
+            home_server,
+            user_id,
+            access_token,
+            allowed_rooms,
+            auto_accept_invites,  // 保存配置
+            shutdown_tx: Arc::new(shutdown_tx),
+            shutdown_rx,
+            since_token: Arc::new(RwLock::new(None)),
+        }
+    }
+}
+```
+
+**Bridge 集成** (`crates/openfang-api/src/channel_bridge.rs:1219`):
+
+```rust
+// 启动 Matrix 渠道时传递配置
+if matrix_enabled && !mx_config.access_token_env.is_empty() {
+    if let Some(token) = std::env::var(&mx_config.access_token_env).ok() {
+        adapters.push((
+            Arc::new(MatrixAdapter::new(
+                mx_config.home_server.clone(),
+                mx_config.user_id.clone(),
+                token,
+                mx_config.allowed_rooms.clone(),
+                mx_config.auto_accept_invites,  // v0.5.1 传递配置
+            )),
+            mx_config.default_agent.clone(),
+        ));
+    }
+}
+```
+
+### 使用场景
+
+**场景 1: 公共客服机器人**
+```toml
+auto_accept_invites = true
+allowed_rooms = []  # 允许所有人邀请
+```
+
+**场景 2: 私有团队机器人**
+```toml
+auto_accept_invites = false
+allowed_rooms = ["!team-room:matrix.org"]  # 只响应指定房间
+```
+
+---
+
 ## 完成检查清单
 
 - [ ] 理解 ChannelAdapter trait 的设计
 - [ ] 掌握 ChannelMessage 统一消息结构
 - [ ] 理解 AgentRouter 路由机制
 - [ ] 掌握 OutputFormat 消息格式化
-- [ ] 了解 40 个渠道适配器架构
+- [ ] 了解 40+ 个渠道适配器架构
+- [ ] 掌握 Matrix auto_accept_invites 配置 (v0.5.1)
 
 ---
 
@@ -1192,5 +1314,5 @@ split_message() (如需要)
 
 ---
 
-*创建时间：2026-03-15*
-*OpenFang v0.4.4*
+*创建时间：2026-03-15 (更新于 2026-03-20 v0.5.1)*
+*OpenFang v0.5.1*
