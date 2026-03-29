@@ -1,6 +1,6 @@
 # 第 18 节：OFP 协议 — P2P 通信
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-wire/src/peer.rs`
 > - `crates/openfang-wire/src/message.rs`

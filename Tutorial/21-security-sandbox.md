@@ -1,6 +1,6 @@
 # 第 21 节：安全系统 — 沙箱隔离
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-runtime/src/sandbox.rs` (WASM 沙箱)
 > - `crates/openfang-runtime/src/docker_sandbox.rs` (Docker 沙箱)

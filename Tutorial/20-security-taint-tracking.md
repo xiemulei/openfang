@@ -1,6 +1,6 @@
 # 第 20 节：安全系统 — 污点追踪
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**: `crates/openfang-types/src/taint.rs`
 > **关联文件**: `crates/openfang-runtime/src/tool_runner.rs`, `crates/openfang-runtime/src/audit.rs`
 

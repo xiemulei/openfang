@@ -1,10 +1,11 @@
 # 第 9 节：LLM Driver — 实现
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-runtime/src/drivers/mod.rs`
 > - `crates/openfang-runtime/src/drivers/anthropic.rs`
 > - `crates/openfang-runtime/src/drivers/openai.rs`
+> - `crates/openfang-runtime/src/drivers/vertex.rs` (v0.5.2 新增)
 > - `crates/openfang-runtime/src/drivers/fallback.rs`
 
 ## 学习目标
@@ -14,6 +15,7 @@
 - [ ] 理解 OpenAIDriver 的通用适配模式
 - [ ] 掌握 FallbackDriver 的回退机制
 - [ ] 了解特殊 Provider（Claude Code、Copilot）的实现
+- [ ] 了解 Vertex AI 企业版驱动 (v0.5.2 新增)
 
 ---
 
@@ -96,6 +98,7 @@ OpenFang 支持 **27+ Provider**，分为以下几类：
 | `qwen-code` | CLI | 调用本地 Qwen Code CLI（OAuth 免费） |
 | `github-copilot` / `copilot` | Token 交换 | GitHub PAT → Copilot API Token |
 | `codex` / `openai-codex` | 凭证同步 | 复用 Codex CLI 的配置 |
+| `vertex-ai` / `vertex` / `google-vertex` | OAuth | GCP 服务账号 OAuth (v0.5.2 新增) |
 
 ---
 
@@ -963,6 +966,119 @@ Request → Driver 1 → 失败 → Driver 2 → 失败 → Driver 3 → 成功
 - 非重试错误也回退（如 ModelNotFound）
 - 所有失败才返回错误
 
+---
+
+## 8. VertexAIDriver — GCP 企业版 (v0.5.2 新增)
+
+### 文件位置
+`crates/openfang-runtime/src/drivers/vertex.rs` (794 行)
+
+### 8.1 结构体定义
+
+```rust
+pub struct VertexAIDriver {
+    project_id: String,                              // GCP 项目 ID
+    region: String,                                  // GCP 区域（默认 us-central1）
+    token_cache: Arc<RwLock<TokenCache>>,            // OAuth 令牌缓存
+    client: reqwest::Client,
+}
+
+struct TokenCache {
+    token: Option<Zeroizing<String>>,                // 零化令牌（内存安全）
+    expires_at: Option<Instant>,                     // 过期时间
+}
+```
+
+### 8.2 OAuth 认证机制
+
+Vertex AI 使用 **OAuth 2.0 Bearer Token** 认证，与 Anthropic 的 `x-api-key` 和 Gemini 的 `x-goog-api-key` 完全不同。
+
+**三级降级策略**（获取 access token）：
+
+```rust
+// vertex.rs:127-177
+async fn fetch_access_token(&self) -> Result<String, LlmError> {
+    // 1. 环境变量直接提供（测试用）
+    if let Ok(token) = std::env::var("VERTEX_AI_ACCESS_TOKEN") {
+        return Ok(token);
+    }
+
+    // 2. Application Default Credentials
+    let output = Command::new("gcloud")
+        .args(["auth", "application-default", "print-access-token"])
+        .output().await?;
+
+    // 3. 常规 gcloud auth
+    if !output.status.success() {
+        let output = Command::new("gcloud")
+            .args(["auth", "print-access-token"])
+            .output().await?;
+    }
+}
+```
+
+**令牌缓存**：
+- 使用 `Arc<RwLock<TokenCache>>` 线程安全缓存
+- `Zeroizing<String>` 确保 drop 时令牌被清零
+- 缓存有效期 50 分钟（OAuth 令牌通常 1 小时过期）
+
+**所需环境变量**：
+
+| 环境变量 | 用途 | 必须 |
+|----------|------|------|
+| `GOOGLE_APPLICATION_CREDENTIALS` | 服务账号 JSON 文件路径 | 是 |
+| `GOOGLE_CLOUD_PROJECT` | GCP 项目 ID | 否（可从 JSON 读取） |
+| `GOOGLE_CLOUD_REGION` | GCP 区域 | 否（默认 `us-central1`） |
+| `VERTEX_AI_ACCESS_TOKEN` | 预生成令牌 | 否（测试用） |
+
+### 8.3 与 Gemini 驱动的对比
+
+Vertex AI 本质上是 Gemini API 的企业版，但有几个关键差异：
+
+| 维度 | Vertex AI | Gemini |
+|------|-----------|--------|
+| **认证** | OAuth 2.0 Bearer Token | API Key |
+| **端点** | `{region}-aiplatform.googleapis.com/v1/projects/...` | `generativelanguage.googleapis.com/v1beta/models/...` |
+| **Thinking 支持** | 不支持 | 支持（thought_signature） |
+| **流式事件** | 仅 TextDelta + ContentComplete | 完整事件（ToolUseStart/InputDelta/End） |
+| **ToolUse ID** | `call_{uuid前8位}` 自行生成 | API 返回原始 ID |
+| **重试状态码** | 429, 503 | 同上 |
+
+### 8.4 端点 URL 格式
+
+```
+非流式: https://{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/publishers/google/models/{model}:generateContent
+流式:   ...models/{model}:streamGenerateContent?alt=sse
+```
+
+### 8.5 工厂注册
+
+```rust
+// drivers/mod.rs:383-411
+if provider == "vertex-ai" || provider == "vertex" || provider == "google-vertex" {
+    let project_id = std::env::var("GOOGLE_CLOUD_PROJECT")
+        .or_else(|_| std::env::var("GCLOUD_PROJECT"))
+        .or_else(|_| { /* 从服务账号 JSON 读取 project_id */ })
+        .map_err(|_| LlmError::MissingApiKey(...))?;
+
+    let region = std::env::var("GOOGLE_CLOUD_REGION")
+        .or_else(|_| std::env::var("VERTEX_AI_REGION"))
+        .unwrap_or_else(|_| "us-central1".to_string());
+
+    return Ok(Arc::new(vertex::VertexAIDriver::new(project_id, region)));
+}
+```
+
+支持 3 个 provider 别名：`"vertex-ai"`, `"vertex"`, `"google-vertex"`。
+
+### 8.6 配置示例
+
+```toml
+[default_model]
+provider = "vertex-ai"
+model = "gemini-2.0-flash"
+```
+
 ### 9.5 安全设计
 
 | 特性 | 实现 | 说明 |
@@ -1027,6 +1143,7 @@ impl HealthCheck {
 - [ ] 理解 OpenAIDriver 的通用适配模式
 - [ ] 掌握 FallbackDriver 的回退机制
 - [ ] 了解特殊 Provider（Claude Code、Copilot）的实现
+- [ ] 了解 Vertex AI 企业版驱动 (v0.5.2 新增)
 
 ---
 
@@ -1036,5 +1153,5 @@ impl HealthCheck {
 
 ---
 
-*创建时间：2026-03-15*
-*OpenFang v0.4.4*
+*创建时间：2026-03-15 (更新于 2026-03-29 v0.5.2)*
+*OpenFang v0.5.2*

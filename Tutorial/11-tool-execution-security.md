@@ -1,6 +1,6 @@
 # 第 11 节：工具执行 — 安全系统
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-types/src/taint.rs`
 > - `crates/openfang-types/src/capability.rs`

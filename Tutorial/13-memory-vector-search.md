@@ -1,6 +1,6 @@
 # 第 13 节：记忆系统 — 向量搜索
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-runtime/src/embedding.rs`
 > - `crates/openfang-memory/src/semantic.rs`

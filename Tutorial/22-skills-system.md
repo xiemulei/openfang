@@ -1,6 +1,6 @@
 # 第 22 节：Skills 系统 — 技能市场
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-skills/src/lib.rs` (类型定义)
 > - `crates/openfang-skills/src/registry.rs` (技能注册表)

@@ -1,6 +1,6 @@
 # 第 8 节：LLM Driver — 抽象层
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**: `crates/openfang-runtime/src/llm_driver.rs`
 
 ## 学习目标

@@ -1,6 +1,6 @@
 # 第 17 节：Channel 系统 — 事件总线
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-kernel/src/event_bus.rs`
 > - `crates/openfang-types/src/event.rs`

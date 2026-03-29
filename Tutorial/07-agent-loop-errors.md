@@ -1,6 +1,6 @@
 # 第 7 节：Agent 循环 — 错误处理
 
-> **版本**: v0.4.9 (2026-03-19)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-runtime/src/llm_errors.rs`
 > - `crates/openfang-runtime/src/auth_cooldown.rs`

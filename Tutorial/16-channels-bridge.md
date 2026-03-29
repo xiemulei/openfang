@@ -1,12 +1,13 @@
 # 第 16 节：Channel 系统 — 消息渠道
 
-> **版本**: v0.5.1 (2026-03-20)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-channels/src/types.rs`
 > - `crates/openfang-channels/src/bridge.rs`
 > - `crates/openfang-channels/src/router.rs`
 > - `crates/openfang-channels/src/formatter.rs`
 > - `crates/openfang-channels/src/matrix.rs` (v0.5.1: 新增 auto_accept_invites 配置)
+> - `crates/openfang-channels/src/mqtt.rs` (v0.5.2 新增)
 > - `crates/openfang-channels/src/wecom.rs` (v0.4.9 新增)
 > - `crates/openfang-channels/src/dingtalk_stream.rs` (v0.4.9 新增)
 
@@ -17,6 +18,7 @@
 - [ ] 理解 AgentRouter 路由机制
 - [ ] 掌握 OutputFormat 消息格式化
 - [ ] 了解 42+ 渠道适配器架构 (v0.4.9 新增企业微信、钉钉流式)
+- [ ] 了解 MQTT Pub/Sub 适配器 (v0.5.2 新增)
 
 ---
 
@@ -802,6 +804,12 @@ pub fn split_message(text: &str, max_len: usize) -> Vec<&str> {
 | RocketChat | `rocketchat.rs` |
 | Twitch | `twitch.rs` |
 
+### Wave 6 — Niche & Differentiating (v0.5.2 新增)
+
+| 适配器 | 模块 |
+|--------|------|
+| **MQTT** | `mqtt.rs` (v0.5.2 新增) |
+
 ---
 
 ## 15. WeComAdapter — 企业微信适配器 (v0.4.9 新增)
@@ -1297,7 +1305,76 @@ allowed_rooms = ["!team-room:matrix.org"]  # 只响应指定房间
 
 ---
 
-## 完成检查清单
+---
+
+## 19. MqttAdapter — MQTT Pub/Sub 适配器 (v0.5.2 新增)
+
+### 文件位置
+`crates/openfang-channels/src/mqtt.rs` (604 行)
+
+### 核心结构
+
+```rust
+pub struct MqttAdapter {
+    broker_url: String,           // MQTT broker URL
+    client_id: String,            // 客户端 ID（空时自动生成）
+    subscribe_topic: String,      // 订阅主题（接收消息）
+    publish_topic: String,        // 发布主题（发送响应）
+    username: Option<String>,
+    password: Option<String>,
+    use_tls: bool,
+    keep_alive: u16,
+    clean_session: bool,
+    qos: QoS,                     // QoS 级别 (0/1/2)
+    shutdown_tx: Arc<watch::Sender<bool>>,
+    shutdown_rx: watch::Receiver<bool>,
+    publish_tx: PublishSender,    // 出站消息通道
+}
+```
+
+### 配置示例
+
+```toml
+[channels.mqtt]
+broker_url = "tcp://broker.hivemq.com:1883"
+subscribe_topic = "openfang/inbox"
+publish_topic = "openfang/outbox"
+# username_env = "MQTT_USERNAME"
+# password_env = "MQTT_PASSWORD"
+use_tls = false
+qos = 1
+```
+
+### 设计特点
+
+| 特点 | 说明 |
+|------|------|
+| **Pub/Sub 模式** | 订阅主题接收消息，发布主题发送响应 |
+| **消息分块** | 长消息自动分块（4096 字符上限），在换行处分割 |
+| **指数退避重连** | 1s → 2s → 4s → ... → 60s（上限） |
+| **JSON 负载支持** | 支持 `{"text": "..."}` 格式的 JSON 负载 |
+| **命令解析** | 以 `/` 开头的消息解析为 `ChannelContent::Command` |
+| **广播模式** | 所有消息标记为 `is_group = true` |
+| **QoS 支持** | 支持 QoS 0 (AtMostOnce)、1 (AtLeastOnce)、2 (ExactlyOnce) |
+
+### URL 解析
+
+| 格式 | 端口 |
+|------|------|
+| `tcp://host:port` | 使用指定端口 |
+| `ssl://host:port` | 使用指定端口 |
+| `host` + `use_tls=false` | 1883 |
+| `host` + `use_tls=true` | 8883 |
+
+### 未实现的方法
+
+| 方法 | 行为 |
+|------|------|
+| `send_typing()` | 空操作（MQTT 无 typing 概念） |
+| `send_reaction()` | 默认 no-op |
+| `status()` | 默认 `connected = false` |
+
+---
 
 - [ ] 理解 ChannelAdapter trait 的设计
 - [ ] 掌握 ChannelMessage 统一消息结构
@@ -1305,6 +1382,7 @@ allowed_rooms = ["!team-room:matrix.org"]  # 只响应指定房间
 - [ ] 掌握 OutputFormat 消息格式化
 - [ ] 了解 40+ 个渠道适配器架构
 - [ ] 掌握 Matrix auto_accept_invites 配置 (v0.5.1)
+- [ ] 了解 MQTT Pub/Sub 适配器 (v0.5.2)
 
 ---
 
@@ -1314,5 +1392,5 @@ allowed_rooms = ["!team-room:matrix.org"]  # 只响应指定房间
 
 ---
 
-*创建时间：2026-03-15 (更新于 2026-03-20 v0.5.1)*
-*OpenFang v0.5.1*
+*创建时间：2026-03-15 (更新于 2026-03-29 v0.5.2)*
+*OpenFang v0.5.2*

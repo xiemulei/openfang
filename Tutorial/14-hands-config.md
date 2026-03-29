@@ -1,6 +1,6 @@
 # 第 14 节：Hands 系统 — 配置与激活
 
-> **版本**: v0.4.4 (2026-03-16)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**: `crates/openfang-hands/`, `crates/openfang-types/src/hand.rs`
 
 ---

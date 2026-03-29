@@ -1,6 +1,6 @@
 # 第 19 节：A2A 协议 — Agent 间通信
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-runtime/src/a2a.rs`
 > - `crates/openfang-api/src/routes.rs` (A2A 端点)

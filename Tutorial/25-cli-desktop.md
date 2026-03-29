@@ -1,6 +1,6 @@
 # 第 25 节：CLI 与 Desktop 应用
 
-> **版本**: v0.4.9 (2026-03-19)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**: `crates/openfang-cli/src/main.rs`, `crates/openfang-desktop/src/lib.rs`
 > **新增功能**: PWA 离线支持、manifest.json、Service Worker
 

@@ -1,6 +1,6 @@
 # OpenFang 学习笔记 — 25 节完整教程
 
-> **版本**: v0.4.9 (2026-03-19)
+> **版本**: v0.5.2 (2026-03-29)
 > **状态**: ✅ 全部完成
 > **总计**: 14 Crates, 145K+ LOC, 1767+ Tests, 25 节教程
 
@@ -106,6 +106,58 @@
 | 2026-03-15 | 扩展为 20 节详细计划 | 本文件 |
 | 2026-03-16 | 添加 Hands 系统第 14-15 节、更新版本到 v0.4.4 | 14-hands-config.md, 15-hands-lifecycle.md |
 | 2026-03-19 | 更新到 v0.4.9: 新增企业微信渠道、图片生成流水线、Agent 重启等 | 本文件、01/16/24 节 |
+| 2026-03-29 | 更新到 v0.5.2: 合并 main 分支，大幅更新教程内容 | 全部教程 |
+
+---
+
+## v0.5.2 版本变更摘要 (main 分支合并)
+
+### 核心架构变更
+
+#### LLM Driver
+- **Vertex AI 驱动** (`vertex.rs`, 794 行新增): GCP 企业版 OAuth 认证，支持所有 Gemini 模型
+- **Anthropic 驱动增强**: 新增 `ensure_object()` 防止双重序列化问题
+- **Gemini 驱动增强**: +439 行改进
+- **Claude Code 驱动增强**: +125 行改进
+
+#### MCP 系统 (重大重构)
+- **迁移到 rmcp SDK v1.2**: 替代手写 JSON-RPC 实现，代码从 1000+ 行精简到 539 行
+- **新增 Streamable HTTP 传输**: 支持 MCP 2025-03-26 协议版本
+- **SSRF 防护增强**: 显式检查云元数据端点
+- **自定义 HTTP 头**: 支持 Bearer 认证
+
+#### 渠道系统
+- **MQTT 适配器** (`mqtt.rs`, 604 行新增): Pub/Sub 模式，支持 QoS 0/1/2
+- **飞书增强** (`feishu.rs`, +1082 行): WebSocket 接收模式
+
+#### Kernel 系统
+- **Heartbeat Monitor** (`heartbeat.rs`, 188 行新增): Agent 健康检查和自动恢复
+- **Kernel 重构** (`kernel.rs`, +569 行): 新增字段和方法重构
+
+#### Agent Loop
+- **上下文管理管线升级**: 4 阶段溢出恢复 + 动态上下文预算守卫
+- **ContextBudget** (`context_budget.rs`, 355 行新增): 替代硬编码截断
+- **Compactor 重写** (`compactor.rs`, +98 行): 3 阶段 LLM 智能压缩
+
+#### 记忆系统
+- **HTTP 后端** (`http_client.rs`, 246 行新增): 支持 PostgreSQL + pgvector
+- **双后端架构**: SQLite + HTTP 自动切换/回退
+- **向量搜索增强**: 候选扩展 10x + 余弦相似度重排序
+- **任务队列 API**: task_post/claim/complete/list
+
+#### Skills 系统
+- **Freeze 机制**: Stable 模式下冻结注册表
+- **Workspace Skills**: 项目级技能覆盖全局技能
+- **安全扫描**: SkillVerifier prompt injection 检测
+
+### 新增依赖
+- `rmcp = "1.2"` (MCP 官方 Rust SDK)
+- `rumqttc` (MQTT 客户端)
+
+### 统计
+- **98 个文件变更**: +15347/-1683 行
+- **新增 14 个文件**: vertex.rs, mqtt.rs, heartbeat.rs, http_client.rs 等
+- **121 个 commits** 合并自 main 分支
 
 ---
 
@@ -222,6 +274,6 @@ temp_dir = "/tmp/openfang_uploads"
 
 ---
 
-*OpenFang v0.4.9 — 25 节完整教程系列*
-*创建时间：2026-03-16 (更新于 2026-03-19)*
+*OpenFang v0.5.2 — 25 节完整教程系列*
+*创建时间：2026-03-16 (更新于 2026-03-29)*
 *🐍 OpenFang — Open-source Agent Operating System*

@@ -1,12 +1,13 @@
 # 第 12 节：记忆系统 — 三层存储
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-types/src/memory.rs`
 > - `crates/openfang-memory/src/structured.rs`
 > - `crates/openfang-memory/src/semantic.rs`
 > - `crates/openfang-memory/src/knowledge.rs`
 > - `crates/openfang-memory/src/substrate.rs`
+> - `crates/openfang-memory/src/http_client.rs` (v0.5.2 新增)
 
 ## 学习目标
 
@@ -18,6 +19,8 @@
 - [ ] 理解 SemanticStore 向量搜索（余弦相似度算法）
 - [ ] 理解 KnowledgeStore 实体关系
 - [ ] 掌握 MemorySubstrate 统一 API
+- [ ] 了解 HTTP 后端与 SQLite 双后端架构 (v0.5.2 新增)
+- [ ] 了解任务队列 API (v0.5.2 新增)
 
 ---
 
@@ -845,6 +848,45 @@ MemorySubstrate 使用 **组合模式** 将 6 个子系统组合成统一的 Mem
 | `consolidation` | 记忆 consolidation | `consolidate()` |
 | `usage` | 使用统计 | 内部使用 |
 
+### 11.1 双后端架构 (v0.5.2 新增)
+
+v0.5.2 引入了 HTTP 后端支持，允许将记忆操作路由到外部 memory-api 服务（基于 PostgreSQL + pgvector + Jina AI embeddings）。
+
+```rust
+// substrate.rs — create_semantic_store
+#[cfg(feature = "http-memory")]
+if backend == "http" && http_url.is_some() {
+    let client = MemoryApiClient::new(url, token);
+    if client.health_check().is_ok() {
+        return SemanticStore::new_with_http(conn, client);
+    }
+    // 失败时 warn 并回退到 SQLite
+}
+```
+
+**路由逻辑**（SemanticStore）：
+- `remember()` → 优先 HTTP，失败回退 SQLite
+- `recall()` → 优先 HTTP，失败回退 SQLite
+
+**MemoryApiClient**（`http_client.rs`）提供：
+| 方法 | 端点 | 功能 |
+|------|------|------|
+| `health_check()` | `GET /health` | 服务可用性检查 |
+| `store()` | `POST /memory/store` | 存储记忆（服务端负责 embedding） |
+| `search()` | `POST /memory/search` | 语义搜索（服务端负责向量搜索） |
+
+### 11.2 任务队列 API (v0.5.2 新增)
+
+```rust
+// substrate.rs — 四个任务队列方法
+pub async fn task_post(title, description, assigned_to, created_by) -> Result<Uuid>
+pub async fn task_claim(agent_id) -> Result<Option<Task>>
+pub async fn task_complete(task_id, result) -> Result<()>
+pub async fn task_list(status) -> Result<Vec<Task>>
+```
+
+任务队列使用 `task_queue` SQLite 表，支持优先级排序和自动清理。
+
 ### Memory Trait 实现
 
 ```rust
@@ -1179,6 +1221,8 @@ for frag in &fragments {
 - [ ] 理解 SemanticStore 向量搜索（余弦相似度算法）
 - [ ] 理解 KnowledgeStore 实体关系
 - [ ] 掌握 MemorySubstrate 统一 API
+- [ ] 了解 HTTP 后端与 SQLite 双后端架构 (v0.5.2 新增)
+- [ ] 了解任务队列 API (v0.5.2 新增)
 
 ---
 
@@ -1188,5 +1232,5 @@ for frag in &fragments {
 
 ---
 
-*创建时间：2026-03-15*
-*OpenFang v0.4.4*
+*创建时间：2026-03-15 (更新于 2026-03-29 v0.5.2)*
+*OpenFang v0.5.2*

@@ -1,6 +1,6 @@
 # 第 23 节：Extensions 系统 — MCP 集成
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**: `crates/openfang-extensions/`, `crates/openfang-runtime/src/mcp.rs`
 
 ## 学习目标
@@ -9,6 +9,7 @@
 - [ ] 掌握凭证保险箱 (Credential Vault) 的 AES-256-GCM 加密机制
 - [ ] 理解 OAuth2 PKCE 流程的实现细节
 - [ ] 掌握健康监控与自动重连机制
+- [ ] 了解 rmcp SDK 迁移 (v0.5.2 更新)
 
 ---
 
@@ -581,34 +582,90 @@ pub fn should_reconnect(&self, id: &str) -> bool {
 
 ## 7. MCP 客户端集成
 
-### 7.1 工具发现流程
+> **v0.5.2 重大更新**：MCP 客户端已从手写 JSON-RPC 实现迁移到官方 `rmcp` SDK (v1.2)。
+
+### 7.1 rmcp SDK 架构
 
 ```rust
-// crates/openfang-runtime/src/mcp.rs:190-235
+// Cargo.toml
+rmcp = { version = "1.2", features = [
+    "client",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+] }
+```
+
+**核心 API**：
+
+| rmcp 导入 | 用途 |
+|-----------|------|
+| `rmcp::model::ClientInfo` | 客户端身份信息 |
+| `rmcp::model::CallToolRequestParams` | 构建 tools/call 请求 |
+| `rmcp::service::RunningService<RoleClient, ClientInfo>` | 运行中的客户端连接句柄 |
+| `rmcp::transport::TokioChildProcess` | stdio 传输 |
+| `rmcp::transport::StreamableHttpClientTransport` | HTTP 传输（2025-03-26 协议） |
+
+**关键设计模式**：`client_info.serve(transport).await` 自动完成 MCP 握手，返回统一连接句柄。
+
+### 7.2 McpConnection 结构
+
+```rust
+// mcp.rs:74-86
+pub struct McpConnection {
+    config: McpServerConfig,
+    tools: Vec<ToolDefinition>,
+    original_names: HashMap<String, String>,     // namespaced → raw name
+    client: RunningService<RoleClient, ClientInfo>, // rmcp SDK 统一句柄
+}
+```
+
+### 7.3 传输类型
+
+```rust
+pub enum McpTransport {
+    Stdio { command: String, args: Vec<String> },
+    Sse { url: String },        // 2024-11-05 协议（已废弃）
+    Http { url: String },       // Streamable HTTP，2025-03-26+ 协议
+}
+```
+
+新增 `Http` 变体支持 MCP 最新协议版本。
+
+### 7.4 工具发现流程 (v0.5.2 更新)
+
+```rust
 async fn discover_tools(&mut self) -> Result<(), String> {
-    let response = self.send_request("tools/list", None).await?;
+    // 使用 rmcp SDK 一行调用替代手写 JSON-RPC
+    let tools_result = self.client.list_all_tools().await
+        .map_err(|e| format!("Failed to list tools: {e}"))?;
 
-    if let Some(tools_array) = response.and_then(|r| r.get("tools").as_array()) {
-        for tool in tools_array {
-            let raw_name = tool["name"].as_str().unwrap_or("unnamed");
-            let description = tool["description"].as_str().unwrap_or("");
-            let input_schema = /* 解析 inputSchema */;
+    for item in tools_result {
+        let raw_name = item.name.as_str();
+        let description = item.description.as_deref().unwrap_or("");
 
-            // 命名空间：mcp_{server}_{tool}
-            let namespaced = format_mcp_tool_name(server_name, raw_name);
+        let namespaced = format_mcp_tool_name(server_name, raw_name);
+        self.original_names.insert(namespaced.clone(), raw_name.to_string());
 
-            // 保存原始名称（保留连字符等）
-            self.original_names.insert(namespaced.clone(), raw_name.to_string());
-
-            self.tools.push(ToolDefinition {
-                name: namespaced,
-                description: format!("[MCP:{server_name}] {description}"),
-                input_schema,
-            });
-        }
+        self.tools.push(ToolDefinition {
+            name: namespaced,
+            description: format!("[MCP:{server_name}] {description}"),
+            input_schema: item.input_schema.unwrap_or_default(),
+        });
     }
     Ok(())
 }
+```
+
+**对比旧实现**：
+
+| 方面 | 旧实现 | 新实现 (rmcp) |
+|------|--------|--------------|
+| 工具发现 | `self.send_request("tools/list", None)` | `self.client.list_all_tools().await` |
+| 工具调用 | 手写 JSON-RPC `tools/call` | `CallToolRequestParams::new().with_arguments()` |
+| 连接管理 | 手动 JSON-RPC framing | `client_info.serve(transport).await` |
+| 会话管理 | 手动 Session-Id | rmcp SDK 自动管理 |
+| 类型安全 | `serde_json::Value` 全程 | 强类型模型 |
+| 代码行数 | 显著更多 | 539 行（含测试） |
 ```
 
 ### 7.2 工具命名空间
@@ -732,6 +789,9 @@ pub struct InstalledIntegration {
 | **白名单传递** | 只传递显式配置的 env vars |
 | **路径遍历防护** | 拒绝含 `..` 的命令路径 |
 | **SSRF 防护** | SSE URL 检查元数据端点 |
+| **SSRF 防护增强** | v0.5.2: 显式检查 `169.254.169.254` 和 `metadata.google` |
+| **自定义 HTTP 头** | v0.5.2: 支持 `headers` 配置（如 `Authorization: Bearer`） |
+| **Streamable HTTP** | v0.5.2: 支持 MCP 2025-03-26 协议版本 |
 
 ### 9.3 OAuth2 PKCE 安全
 
@@ -864,6 +924,7 @@ Vault (加密存储) → .env (开发方便) → Env (容器部署) → Interact
 - [ ] 掌握凭证保险箱的 AES-256-GCM 加密机制
 - [ ] 理解 OAuth2 PKCE 流程的实现细节
 - [ ] 掌握健康监控与自动重连机制
+- [ ] 了解 rmcp SDK 迁移 (v0.5.2 更新)
 
 ---
 
@@ -873,5 +934,5 @@ Vault (加密存储) → .env (开发方便) → Env (容器部署) → Interact
 
 ---
 
-*创建时间：2026-03-15*
-*OpenFang v0.4.4*
+*创建时间：2026-03-15 (更新于 2026-03-29 v0.5.2)*
+*OpenFang v0.5.2*

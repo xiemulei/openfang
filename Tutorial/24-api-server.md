@@ -1,6 +1,6 @@
 # 第 24 节：API 服务 — REST/WS 端点
 
-> **版本**: v0.5.1 (2026-03-20)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**: `crates/openfang-api/src/server.rs`, `crates/openfang-api/src/routes.rs`
 > **新增端点**: `/api/agents/{id}/restart`, `/api/hands/upsert`, `/api/config/schema`, `/api/comms/events/stream`, `/api/approvals` (增强版)
 

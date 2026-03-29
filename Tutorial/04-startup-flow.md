@@ -1,7 +1,7 @@
 # 第 4 节：启动流程分析
 
-> **版本**: v0.4.4 (2026-03-15)
-> **核心文件**: `crates/openfang-kernel/src/kernel.rs`
+> **版本**: v0.5.2 (2026-03-29)
+> **核心文件**: `crates/openfang-kernel/src/kernel.rs`, `crates/openfang-kernel/src/heartbeat.rs`
 
 ## 学习目标
 
@@ -44,8 +44,13 @@ flowchart TD
 
     T --> U[返回 Kernel 实例]
     U --> V[openfang_api::server::run_daemon]
-    V --> W[启动 Axum HTTP 服务器<br/>绑定 127.0.0.1:4200]
-    W --> X[✅ Daemon 运行中<br/>Dashboard 可访问]
+    V --> W[start_background_agents]
+    W --> W1[恢复持久化 Hand]
+    W1 --> W2[启动后台 Agent 循环]
+    W2 --> W3[✅ 启动 Heartbeat Monitor]
+    W3 --> W4[条件启动 OFP Peer Node]
+    W4 --> X[启动 Axum HTTP 服务器<br/>绑定 127.0.0.1:4200]
+    X --> Y[✅ Daemon 运行中<br/>Dashboard 可访问]
 ```
 
 ---
@@ -551,7 +556,120 @@ info!(
 
 ---
 
-## 10. API 服务器启动
+## 11. Heartbeat Monitor — Agent 健康检查 (v0.5.2 新增)
+
+### 文件位置
+`crates/openfang-kernel/src/heartbeat.rs` (188 行)
+`crates/openfang-kernel/src/kernel.rs:4261-4407` (启动逻辑)
+
+### 11.1 设计动机
+
+在 Daemon 模式下，后台运行的 Agent 可能因各种原因停止响应（LLM 超时、外部服务故障、代码 bug）。Heartbeat Monitor 定期检查所有 Agent 的健康状态，自动恢复崩溃的 Agent。
+
+### 11.2 HeartbeatConfig
+
+```rust
+// heartbeat.rs:15-22
+pub struct HeartbeatConfig {
+    pub check_interval_secs: u64,     // 心跳检查间隔，默认 30 秒
+    pub default_timeout_secs: u64,    // 默认无响应超时，默认 180 秒
+    pub max_recovery_attempts: u32,   // 最大自动恢复尝试次数，默认 3
+    pub recovery_cooldown_secs: u64,  // 恢复尝试冷却时间，默认 60 秒
+}
+```
+
+### 11.3 check_agents — 纯函数检查
+
+```rust
+// heartbeat.rs:50-100
+pub fn check_agents(
+    registry: &AgentRegistry,
+    config: &HeartbeatConfig,
+) -> Vec<HeartbeatStatus> {
+    // 遍历 Running 和 Crashed 状态的 Agent
+    for entry in registry.all() {
+        if entry.state != AgentState::Running && entry.state != AgentState::Crashed {
+            continue;
+        }
+
+        let inactive_secs = (now - entry.last_active).num_seconds();
+
+        // 空闲宽限期：防止新创建的 Agent 被误判
+        let IDLE_GRACE_SECS: i64 = 10;
+        if (entry.last_active - entry.created_at).num_seconds() <= IDLE_GRACE_SECS {
+            continue;
+        }
+
+        // 超时阈值：Agent 配置 > 全局默认
+        let timeout = entry.autonomous_config.heartbeat_interval_secs
+            .map(|h| h * 2)  // UNRESPONSIVE_MULTIPLIER = 2
+            .unwrap_or(config.default_timeout_secs);
+
+        let unresponsive = inactive_secs > timeout as i64;
+
+        statuses.push(HeartbeatStatus {
+            agent_id: entry.id.clone(),
+            name: entry.name.clone(),
+            inactive_secs,
+            unresponsive,
+            state: entry.state.clone(),
+        });
+    }
+}
+```
+
+### 11.4 恢复状态机
+
+```
+Running ──[超时无响应]──> Crashed ──[恢复尝试]──> Running
+    ^                                                    │
+    │                    [已达最大恢复次数]                 │
+    └────────────── [成功恢复，tracker.reset()] <────────┘
+                         │
+                         v
+                    Terminated（死亡，需手动重启）
+```
+
+### 11.5 启动流程
+
+在 `start_background_agents()` 最后启动：
+
+```rust
+// kernel.rs:3929-3930
+self.start_heartbeat_monitor();
+```
+
+`start_heartbeat_monitor()` 的完整逻辑：
+1. 创建 `HeartbeatConfig`（从 `config.heartbeat` 读取）
+2. 创建 `RecoveryTracker`（使用 `DashMap` 跟踪每个 Agent 的失败次数）
+3. `tokio::spawn` 每 30 秒执行一次检查循环：
+   - 调用 `check_agents()` 获取健康状态
+   - 检查静默时段（`quiet_hours` 配置）
+   - 对 Crashed Agent 尝试恢复（不超过 `max_recovery_attempts`）
+   - 对无响应 Running Agent 标记为 Crashed
+   - 发布 `HealthCheckFailed` 事件
+
+### 11.6 防误报设计
+
+| 机制 | 说明 |
+|------|------|
+| **空闲宽限期 (10s)** | 新创建的 Agent 不会立即被检查 |
+| **last_active 重置** | 重启后恢复的 Agent 重置 `last_active` 为当前时间 |
+| **静默时段** | 配置的时间段内不执行恢复（如维护窗口） |
+| **冷却时间** | 两次恢复尝试之间至少间隔 60 秒 |
+| **最大恢复次数** | 超过 3 次失败后标记为 Terminated，不再尝试 |
+
+### 11.7 配置示例
+
+```toml
+# config.toml
+[heartbeat]
+default_timeout_secs = 180  # 默认无响应超时（秒）
+```
+
+---
+
+## 12. API 服务器启动
 
 ### 文件位置
 `crates/openfang-api/src/server.rs`
@@ -598,6 +716,9 @@ pub fn run_daemon(kernel: Arc<OpenFangKernel>, listen_addr: &str, ...) {
 | 9 | Hand Registry | 自主代理注册表 |
 | 10 | Extension Registry | 扩展注册表 |
 | 11 | API Server | HTTP 服务 |
+| 12 | **Heartbeat Monitor** | **Agent 健康检查 (v0.5.2 新增)** |
+
+> **注意**：步骤 12 仅在 Daemon 模式下执行，属于 `start_background_agents()` 的一部分。
 
 ---
 
@@ -654,5 +775,5 @@ Bundled（内置） → User-installed（用户安装）
 
 ---
 
-*创建时间：2026-03-15*
-*OpenFang v0.4.4*
+*创建时间：2026-03-15 (更新于 2026-03-29 v0.5.2)*
+*OpenFang v0.5.2*

@@ -1,8 +1,9 @@
 # 第 6 节：Agent 循环 — 上下文管理
 
-> **版本**: v0.4.4 (2026-03-15)
+> **版本**: v0.5.2 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-runtime/src/context_overflow.rs`
+> - `crates/openfang-runtime/src/context_budget.rs` (v0.5.2 新增)
 > - `crates/openfang-runtime/src/session_repair.rs`
 
 ## 学习目标
