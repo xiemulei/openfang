@@ -1,7 +1,7 @@
 # 第 15 节：Hands 系统 — 生命周期管理
 
-> **版本**: v0.4.4 (2026-03-16)
-> **核心文件**: `crates/openfang-hands/src/registry.rs`, `crates/openfang-hands/src/manager.rs`
+> **版本**: v0.5.2 (2026-03-29)
+> **核心文件**: `crates/openfang-hands/src/registry.rs`, `crates/openfang-hands/src/lib.rs`
 
 ---
 
@@ -21,28 +21,32 @@
 **文件**: `crates/openfang-hands/src/registry.rs`
 
 ```rust
-/// Hands 注册表 — 跟踪所有已激活的 Hand 实例
+/// Hands 注册表 — 跟踪所有 Hand 定义和实例
 pub struct HandRegistry {
-    /// 已激活的 Hand 实例映射
-    instances: DashMap<HandId, HandInstance>,
-    /// 状态存储（持久化）
-    store: HandStateStore,
-    /// 事件总线
-    event_tx: broadcast::Sender<HandEvent>,
+    /// 所有已知的 Hand 定义，按 hand_id 索引
+    definitions: DashMap<String, HandDefinition>,
+    /// 活跃的 Hand 实例，按实例 UUID 索引
+    instances: DashMap<Uuid, HandInstance>,
 }
 
 /// Hand 实例运行时状态
 pub struct HandInstance {
-    /// Hand ID
-    pub id: HandId,
+    /// 实例唯一标识符
+    pub instance_id: Uuid,
+    /// 对应的 Hand 定义 ID
+    pub hand_id: String,
     /// 运行状态
-    pub state: HandState,
-    /// Agent ID（关联到 Agent Loop）
-    pub agent_id: AgentId,
-    /// 启动时间
-    pub started_at: Instant,
-    /// Dashboard 指标
-    pub metrics: HandMetrics,
+    pub status: HandStatus,
+    /// 关联的 Agent ID
+    pub agent_id: Option<AgentId>,
+    /// Agent 名称（显示用）
+    pub agent_name: String,
+    /// 用户提供的配置覆盖
+    pub config: HashMap<String, serde_json::Value>,
+    /// 激活时间
+    pub activated_at: DateTime<Utc>,
+    /// 最后更新时间
+    pub updated_at: DateTime<Utc>,
 }
 ```
 
@@ -50,12 +54,12 @@ pub struct HandInstance {
 
 ```rust
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub enum HandState {
-    /// 已激活、正在运行
-    Running,
-    /// 已暂停（保留状态）
+pub enum HandStatus {
+    /// 活跃运行中
+    Active,
+    /// 已暂停
     Paused,
-    /// 已停止（清除状态）
+    /// 已停止
     Stopped,
     /// 错误状态
     Error { message: String },
@@ -84,75 +88,47 @@ pub enum HandState {
 
 ### 2.1 存储结构
 
-**文件**: `~/.openfang/hands/{id}/state.bin`
+**文件**: `~/.openfang/hands/state.json`
+
+> **v0.5.2 更新**：持久化使用简单 JSON 序列化，而非 MessagePack+ZSTD 压缩。
 
 ```rust
-/// 手状态序列化结构
-#[derive(Serialize, Deserialize)]
-pub struct HandStateData {
-    /// Hand ID
-    pub id: HandId,
-    /// 当前迭代次数
-    pub iteration: u32,
-    /// 会话历史（压缩）
-    pub session_history: Vec<CompressedMessage>,
-    /// 采集的记忆 ID 列表
-    pub memory_ids: Vec<MemoryId>,
-    /// Dashboard 指标快照
-    pub metrics_snapshot: HandMetrics,
-    /// 最后更新时间
-    pub updated_at: u64,  // Unix timestamp
+// 实际代码使用 serde_json::to_string_pretty 直接序列化
+// registry.rs:56-74
+async fn save_state(&self) -> Result<(), HandError> {
+    let instances: Vec<_> = self.instances
+        .iter()
+        .map(|r| r.value().clone())
+        .collect();
+
+    let json = serde_json::to_string_pretty(&instances)
+        .map_err(|e| HandError::Internal(format!("Serialize error: {e}")))?;
+
+    tokio::fs::write(&self.state_path, &json).await
+        .map_err(|e| HandError::Internal(format!("Write error: {e}")))?;
+
+    Ok(())
 }
 ```
 
-### 2.2 持久化流程
+### 2.2 恢复流程
 
 ```rust
-impl HandRegistry {
-    /// 持久化 Hand 状态
-    pub async fn persist_state(&self, hand_id: &HandId) -> Result<(), HandError> {
-        let instance = self.instances.get(hand_id)
-            .ok_or(HandError::NotFound)?;
-
-        let state_data = HandStateData {
-            id: hand_id.clone(),
-            iteration: instance.metrics.iteration,
-            session_history: compress_messages(&instance.agent_history),
-            memory_ids: instance.collected_memories.clone(),
-            metrics_snapshot: instance.metrics.clone(),
-            updated_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)?
-                .as_secs(),
-        };
-
-        // 序列化并写入文件
-        let bytes = rmp_serde::to_vec(&state_data)?;
-        let compressed = zstd::stream::encode_all(&bytes[..], 3)?;
-
-        let state_path = self.get_state_path(hand_id);
-        tokio::fs::write(&state_path, &compressed).await?;
-
-        Ok(())
+// registry.rs:76-95
+async fn load_state(&self) -> Result<Vec<HandInstance>, HandError> {
+    if !self.state_path.exists() {
+        return Ok(Vec::new());
     }
+
+    let json = tokio::fs::read_to_string(&self.state_path).await
+        .map_err(|e| HandError::Internal(format!("Read error: {e}")))?;
+
+    let instances: Vec<HandInstance> = serde_json::from_str(&json)
+        .map_err(|e| HandError::Internal(format!("Deserialize error: {e}")))?;
+
+    Ok(instances)
 }
 ```
-
-### 2.3 恢复流程
-
-```rust
-impl HandRegistry {
-    /// 从持久化状态恢复 Hand
-    pub async fn restore_hand(&self, hand_id: &HandId) -> Result<(), HandError> {
-        let state_path = self.get_state_path(hand_id);
-
-        // 读取压缩文件
-        let compressed = tokio::fs::read(&state_path).await?;
-
-        // 解压并反序列化
-        let bytes = zstd::stream::decode_all(&compressed[..])?;
-        let state_data: HandStateData = rmp_serde::from_slice(&bytes)?;
-
-        // 重建 HandInstance
         let instance = HandInstance {
             id: state_data.id.clone(),
             state: HandState::Paused,  // 恢复时为暂停状态
@@ -203,6 +179,22 @@ pub enum MetricKind {
     Timestamp,
     /// 字符串状态
     Status,
+}
+```
+
+> **v0.5.2 更新**：实际代码中 `HandMetric` 使用更简单的结构（仅 `label`, `memory_key`, `format` 三个字段），没有 `MetricKind`/`MetricValue` 类型。以上为设计参考。实际实现中，指标通过 `MemorySubstrate` 的 key-value 存储来追踪。
+
+**实际的 HandMetric 定义** (`lib.rs:139-147`):
+```rust
+pub struct HandMetric {
+    pub label: String,
+    pub memory_key: String,
+    #[serde(default = "default_format")]
+    pub format: String,  // e.g. "number", "duration", "bytes"; 默认 "number"
+}
+
+pub struct HandDashboard {
+    pub metrics: Vec<HandMetric>,
 }
 ```
 
@@ -259,7 +251,9 @@ impl HandInstance {
 
 ### 4.1 事件类型
 
-**文件**: `crates/openfang-hands/src/events.rs`
+> **v0.5.2 更新**：`events.rs` 文件尚未在代码库中实现。以下 `HandEvent` 为设计规划。
+
+**文件**: `crates/openfang-hands/src/events.rs`（设计规划中）
 
 ```rust
 /// Hand 生命周期事件
@@ -465,4 +459,4 @@ impl HandRegistry {
 ---
 
 *创建时间：2026-03-16*
-*OpenFang v0.4.4*
+*OpenFang v0.5.2*

@@ -984,4 +984,4 @@ EventBus.publish(Event { payload: Message(...) })
 ---
 
 *创建时间：2026-03-15*
-*OpenFang v0.4.4*
+*OpenFang v0.5.2*

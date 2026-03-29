@@ -285,8 +285,15 @@ for iteration in 0..max_iterations {
         cb(LoopPhase::Thinking);
     }
 
-    // 5. 调用 LLM（带重试）
-    let mut response = call_with_retry(&*driver, request, Some(provider_name), None).await?;
+    // 5. 调用 LLM（带重试 + fallback 模型链）
+    let mut response = call_with_retry(
+        &*driver,
+        request,
+        Some(provider_name),
+        None,
+        &manifest.fallback_models,  // ModelNotFound 时依次尝试 fallback 模型
+    )
+    .await?;
     total_usage.input_tokens += response.usage.input_tokens;
     total_usage.output_tokens += response.usage.output_tokens;
 
@@ -566,5 +573,5 @@ Vector Search (embedding) → Text Search (fallback)
 
 ---
 
-*创建时间：2026-03-15*
-*OpenFang v0.4.4*
+*创建时间：2026-03-15 (更新于 2026-03-29 v0.5.2)*
+*OpenFang v0.5.2*

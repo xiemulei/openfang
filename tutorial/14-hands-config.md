@@ -1,7 +1,7 @@
 # 第 14 节：Hands 系统 — 配置与激活
 
 > **版本**: v0.5.2 (2026-03-29)
-> **核心文件**: `crates/openfang-hands/`, `crates/openfang-types/src/hand.rs`
+> **核心文件**: `crates/openfang-hands/src/lib.rs`, `crates/openfang-hands/src/registry.rs`, `crates/openfang-hands/src/bundled.rs`
 
 ---
 
@@ -127,7 +127,7 @@ metrics = [
 
 ## 3. 内置 Hands 列表
 
-### 3.1 8 个 Bundled Hands
+### 3.1 9 个 Bundled Hands
 
 | Hand | 职责 | 核心能力 |
 |------|------|----------|
@@ -136,9 +136,10 @@ metrics = [
 | **Collector** | 开源情报收集 | 目标监控、变更检测、情感追踪、知识图谱 |
 | **Predictor** | 超级预测引擎 | 信号收集、校准推理、置信区间、Brier 分数追踪 |
 | **Researcher** | 深度研究 | 多源交叉验证、CRAAP 评估、引用报告、多语言支持 |
-| **Twitter** |  autonomous 推特管理 | 多格式内容创作、定时发布、互动回复、表现分析 |
+| **Twitter** | autonomous 推特管理 | 多格式内容创作、定时发布、互动回复、表现分析 |
 | **Browser** | 网页自动化 | 导航、填表、点击、多步骤工作流、购买审批门控 |
 | **Trader** | 交易分析 | 市场监控、信号识别、风险评估、交易执行（需审批） |
+| **Infisical-Sync** | 密钥同步 (v0.5.2 新增) | Infisical 平台密钥自动同步 |
 
 ### 3.2 代码位置
 
@@ -267,4 +268,4 @@ Hand 被暂停后重新激活时：
 ---
 
 *创建时间：2026-03-16*
-*OpenFang v0.4.4*
+*OpenFang v0.5.2*

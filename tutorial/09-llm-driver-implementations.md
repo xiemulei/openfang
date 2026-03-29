@@ -74,8 +74,10 @@ OpenFang 支持 **37+ Provider**，分为以下几类：
 | `zhipu` / `glm` | `https://open.bigmodel.cn/api/paas/v4` | `ZHIPU_API_KEY` | ✅ |
 | `zhipu_coding` / `codegeex` | `https://maas.aminer.cn/api/paas/v4` | `ZHIPU_API_KEY` | ✅ |
 | `zai` / `z.ai` | `https://z.ai/api/paas/v4` | `ZHIPU_API_KEY` | ✅ |
+| `zai_coding` | `https://z.ai/api/paas/v4` | `ZHIPU_API_KEY` | ✅ |
 | `qianfan` / `baidu` | `https://qianfan.baidubce.com/v2` | `QIANFAN_API_KEY` | ✅ |
 | `volcengine` / `doubao` | `https://ark.cn-beijing.volces.com/api/v3` | `VOLCENGINE_API_KEY` | ✅ |
+| `volcengine_coding` | `https://ark.cn-beijing.volces.com/api/v3` | `VOLCENGINE_API_KEY` | ✅ |
 
 ### 1.6 其他云服务商
 

@@ -949,7 +949,37 @@ impl Memory for MemorySubstrate {
             .map_err(|e| OpenFangError::Internal(e.to_string()))?
     }
 
-    // ... 其他方法
+    async fn delete(&self, agent_id: AgentId, key: &str) -> OpenFangResult<()> {
+        let store = self.structured.clone();
+        let key = key.to_string();
+        tokio::task::spawn_blocking(move || store.delete(agent_id, &key))
+            .await
+            .map_err(|e| OpenFangError::Internal(e.to_string()))?
+    }
+
+    async fn forget(&self, id: MemoryId) -> OpenFangResult<()> {
+        let store = self.semantic.clone();
+        tokio::task::spawn_blocking(move || store.forget(id))
+            .await
+            .map_err(|e| OpenFangError::Internal(e.to_string()))?
+    }
+
+    async fn add_relation(&self, relation: Relation) -> OpenFangResult<String> {
+        let store = self.knowledge.clone();
+        tokio::task::spawn_blocking(move || store.add_relation(relation))
+            .await
+            .map_err(|e| OpenFangError::Internal(e.to_string()))?
+    }
+
+    async fn export(&self, format: ExportFormat) -> OpenFangResult<Vec<u8>> {
+        // Phase 1: 导出功能尚未完全实现
+        Err(OpenFangError::Internal("Export not yet implemented".to_string()))
+    }
+
+    async fn import(&self, _data: &[u8], _format: ExportFormat) -> OpenFangResult<ImportReport> {
+        // Phase 1: 导入功能尚未完全实现
+        Err(OpenFangError::Internal("Import not yet implemented in Phase 1".to_string()))
+    }
 }
 ```
 

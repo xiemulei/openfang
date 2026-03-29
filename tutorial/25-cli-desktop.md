@@ -1185,7 +1185,7 @@ self.addEventListener('fetch', (e) => {
 ---
 
 *创建时间：2026-03-15 (更新于 2026-03-19 v0.4.9)*
-*OpenFang v0.4.9*
+*OpenFang v0.5.2*
 
 恭喜！您已经完成了 OpenFang 25 节完整教程系列。
 
@@ -1204,4 +1204,4 @@ self.addEventListener('fetch', (e) => {
 
 ---
 
-*OpenFang v0.4.9 — 25 节完整教程系列*
+*OpenFang v0.5.2 — 25 节完整教程系列*

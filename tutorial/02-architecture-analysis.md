@@ -308,4 +308,4 @@ openfang-migrate = { path = "../openfang-migrate" }
 ---
 
 *创建时间：2026-03-14*
-*OpenFang v0.4.0*
+*OpenFang v0.5.2*

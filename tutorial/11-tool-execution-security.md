@@ -242,7 +242,7 @@ fn check_taint_shell_exec(command: &str) -> Option<String> {
 
     // Layer 2: 启发式检测注入模式
     let suspicious_patterns = [
-        "curl", "wget", "base64", "eval", "bash -c", "sh -c",
+        "curl ", "wget ", "| sh", "| bash", "base64 -d", "eval ",
     ];
 
     for pattern in &suspicious_patterns {
@@ -349,11 +349,7 @@ fn check_taint_net_fetch(url: &str) -> Option<String> {
         "token=",
         "secret=",
         "password=",
-        "passwd=",
-        "key=",
-        "auth=",
-        "access_token=",
-        "private_key=",
+        "Authorization:",
     ];
 
     for pattern in &exfil_patterns {
@@ -451,23 +447,55 @@ pub fn capability_matches(granted: &Capability, required: &Capability) -> bool {
         (Capability::FileRead(pattern), Capability::FileRead(path)) => {
             glob_matches(pattern, path)
         }
+        (Capability::FileWrite(pattern), Capability::FileWrite(path)) => {
+            glob_matches(pattern, path)
+        }
         (Capability::NetConnect(pattern), Capability::NetConnect(host)) => {
             glob_matches(pattern, host)
         }
         (Capability::ToolInvoke(granted_id), Capability::ToolInvoke(required_id)) => {
             granted_id == required_id || granted_id == "*"
         }
+        (Capability::LlmQuery(pattern), Capability::LlmQuery(model)) => {
+            glob_matches(pattern, model)
+        }
+        (Capability::AgentMessage(pattern), Capability::AgentMessage(target)) => {
+            glob_matches(pattern, target)
+        }
+        (Capability::AgentKill(pattern), Capability::AgentKill(target)) => {
+            glob_matches(pattern, target)
+        }
+        (Capability::MemoryRead(pattern), Capability::MemoryRead(scope)) => {
+            glob_matches(pattern, scope)
+        }
+        (Capability::MemoryWrite(pattern), Capability::MemoryWrite(scope)) => {
+            glob_matches(pattern, scope)
+        }
         (Capability::ShellExec(pattern), Capability::ShellExec(cmd)) => {
             glob_matches(pattern, cmd)
+        }
+        (Capability::EnvRead(pattern), Capability::EnvRead(var)) => {
+            glob_matches(pattern, var)
+        }
+        (Capability::OfpConnect(pattern), Capability::OfpConnect(peer)) => {
+            glob_matches(pattern, peer)
+        }
+        (Capability::EconTransfer(pattern), Capability::EconTransfer(target)) => {
+            glob_matches(pattern, target)
         }
 
         // 简单布尔能力
         (Capability::AgentSpawn, Capability::AgentSpawn) => true,
         (Capability::OfpDiscover, Capability::OfpDiscover) => true,
+        (Capability::OfpAdvertise, Capability::OfpAdvertise) => true,
+        (Capability::EconEarn, Capability::EconEarn) => true,
 
         // 数值能力（预算检查）
         (Capability::LlmMaxTokens(granted_max), Capability::LlmMaxTokens(required_max)) => {
             granted_max >= required_max
+        }
+        (Capability::NetListen(granted_port), Capability::NetListen(required_port)) => {
+            granted_port == required_port
         }
         (Capability::EconSpend(granted_max), Capability::EconSpend(required_amount)) => {
             granted_max >= required_amount
@@ -510,9 +538,11 @@ pub fn validate_capability_inheritance(
 
 ## 4. 沙箱隔离系统
 
-### 4.1 WASM 沙箱
+### 4.1 WASM 沙箱（设计规划，尚未实现）
 
-**文件位置**: `crates/openfang-runtime/src/wasm_sandbox.rs`
+> **注意**：以下内容为 WASM 沙箱的设计规划。当前版本中工具执行使用子进程沙箱（见 4.2 节），WASM 沙箱尚未在代码库中实现。
+
+**设计参考**: `crates/openfang-runtime/src/wasm_sandbox.rs`（计划中）
 
 **架构**:
 
@@ -1040,5 +1070,5 @@ fn test_capability_inheritance_escalation_denied() {
 
 ---
 
-*创建时间：2026-03-15*
-*OpenFang v0.4.4*
+*创建时间：2026-03-15 (更新于 2026-03-29 v0.5.2)*
+*OpenFang v0.5.2*
