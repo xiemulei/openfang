@@ -367,78 +367,126 @@ fn merge_content(first: &mut MessageContent, second: MessageContent) {
 
 ---
 
-## 4. ContextBudget — 上下文预算
+## 4. ContextBudget — 上下文预算守卫
 
 ### 文件位置
-`crates/openfang-runtime/src/context_budget.rs`（推断自代码使用）
+`crates/openfang-runtime/src/context_budget.rs` (355 行)
+
+### 4.1 结构体定义
 
 ```rust
+// context_budget.rs:14-21
 pub struct ContextBudget {
-    context_window: usize,     // 上下文窗口大小
-    system_buffer: usize,      // 预留给系统提示
-    tool_result_ratio: f32,    // 工具结果占比
+    pub context_window_tokens: usize,    // 上下文窗口大小（token 数）
+    pub tool_chars_per_token: f64,       // 工具结果字符/token 换算系数 (默认 2.0)
+    pub general_chars_per_token: f64,    // 一般文本字符/token 换算系数 (默认 4.0)
 }
 
 impl ContextBudget {
-    pub fn new(context_window: usize) -> Self {
+    pub fn new(context_window_tokens: usize) -> Self {
         Self {
-            context_window,
-            system_buffer: context_window * 10 / 100,  // 10% 预留给系统提示
-            tool_result_ratio: 0.5,  // 工具结果最多占 50%
+            context_window_tokens,
+            tool_chars_per_token: 2.0,
+            general_chars_per_token: 4.0,
         }
     }
 }
 ```
 
-### apply_context_guard — 应用上下文预算
+### 4.2 预算策略
+
+| 约束类型 | 比例/限制 | 说明 |
+|----------|-----------|------|
+| **单结果上限** | 50% context window | 单个工具结果不超过窗口 50% |
+| **总结果上限** | 75% context window | 所有工具结果总和不超 75% |
+| **每结果上限** | 30% context window | 每个工具结果默认上限（可调整） |
+| **压缩后目标** | 2048 字符 | 超长结果压缩到 2K 字符 |
+
+**关键方法**：
+```rust
+// context_budget.rs:33-44
+pub fn per_result_cap(&self) -> usize {
+    self.context_window_tokens * 3 / 10  // 30%
+}
+
+pub fn single_result_max(&self) -> usize {
+    self.context_window_tokens / 2  // 50%
+}
+
+pub fn total_tool_headroom_chars(&self) -> usize {
+    (self.context_window_tokens * 75 / 100) as usize * self.tool_chars_per_token as usize  // 75%
+}
+```
+
+### 4.3 apply_context_guard — 两轮扫描守卫
+
+**第一轮**：截断超过 50% 上下文窗口的单个工具结果
+**第二轮**：从最早的结果开始，压缩到 2K 字符
 
 ```rust
-// agent_loop.rs:315
+// context_budget.rs:100-198
 pub fn apply_context_guard(
-    messages: &mut Vec<Message>,
+    messages: &mut [openfang_types::Message],
     budget: &ContextBudget,
-    tools: &[ToolDefinition],
-) {
-    // 计算工具结果的 token 总数
-    let mut tool_result_tokens = 0;
-    let mut tool_result_indices = Vec::new();
+) -> usize {
+    let mut compressed_count = 0;
 
-    for (i, msg) in messages.iter().enumerate() {
-        if let MessageContent::Blocks(blocks) = &msg.content {
-            for block in blocks {
+    // === 第一轮：扫描所有工具结果 ===
+    for msg in messages.iter_mut() {
+        if let openfang_types::MessageContent::Blocks(blocks) = &mut msg.content {
+            for block in blocks.iter_mut() {
                 if let ContentBlock::ToolResult { content, .. } = block {
-                    tool_result_tokens += estimate_tokens_single(content);
-                    tool_result_indices.push(i);
-                }
-            }
-        }
-    }
+                    // 估算字符数（假设工具输出密集）
+                    let char_count = content.chars().count();
+                    let token_est = (char_count as f64 / budget.tool_chars_per_token).ceil() as usize;
 
-    // 计算可用预算
-    let available_for_tool_results = budget.context_window - budget.system_buffer;
-    let max_tool_tokens = (available_for_tool_results as f32 * budget.tool_result_ratio) as usize;
-
-    // 如果工具结果超出预算，动态修剪
-    if tool_result_tokens > max_tool_tokens {
-        let reduction_ratio = max_tool_tokens as f32 / tool_result_tokens as f32;
-
-        // 修剪每个工具结果
-        for idx in tool_result_indices {
-            if let MessageContent::Blocks(blocks) = &mut messages[idx].content {
-                for block in blocks.iter_mut() {
-                    if let ContentBlock::ToolResult { content, .. } = block {
-                        let new_len = (content.len() as f32 * reduction_ratio) as usize;
-                        if new_len < content.len() {
-                            content.truncate(new_len);
-                            content.push_str("...[truncated for context budget]");
+                    // 检查是否超过 50% 窗口
+                    if token_est > budget.single_result_max() {
+                        let target_chars = (budget.single_result_max() as f64 * budget.tool_chars_per_token) as usize;
+                        if char_count > target_chars {
+                            *content = format!("{}...[truncated: {}/{} chars]",
+                                &content[..target_chars.min(content.len())], target_chars, char_count);
+                            compressed_count += 1;
                         }
                     }
                 }
             }
         }
     }
+
+    // === 第二轮：从最早的结果开始压缩到 2K 字符 ===
+    let total_headroom = budget.total_tool_headroom_chars();
+    let mut current_tool_chars = 0_usize;
+
+    // 反向遍历（最早的消息在前）
+    for msg in messages.iter_mut() {
+        if let openfang_types::MessageContent::Blocks(blocks) = &mut msg.content {
+            for block in blocks.iter_mut() {
+                if let ContentBlock::ToolResult { content, .. } = block {
+                    let char_count = content.chars().count();
+
+                    if current_tool_chars + char_count > total_headroom {
+                        // 需要压缩
+                        let remaining = total_headroom.saturating_sub(current_tool_chars);
+                        let target = remaining.min(2048);  // 压缩到最多 2K 字符
+                        if char_count > target {
+                            *content = format!("{}...[compressed: {}/{}]",
+                                &content[..target.min(content.len())], target, char_count);
+                            compressed_count += 1;
+                        }
+                    }
+
+                    current_tool_chars += char_count;
+                }
+            }
+        }
+    }
+
+    compressed_count
 }
 ```
+
+**返回值**：被压缩的工具结果数量（用于监控）
 
 ---
 
@@ -574,5 +622,5 @@ fn estimate_token_count(...) -> usize {
 
 ---
 
-*创建时间：2026-03-15*
-*OpenFang v0.4.4*
+*创建时间：2026-03-15 (更新于 2026-03-29 v0.5.2)*
+*OpenFang v0.5.2*

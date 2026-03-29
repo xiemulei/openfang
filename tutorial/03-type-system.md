@@ -99,10 +99,20 @@ pub enum ContentBlock {
     Image { media_type: String, data: String },
 
     /// 工具调用请求（Assistant 发出）
-    ToolUse { id: String, name: String, input: Value },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+        provider_metadata: Option<Value>,
+    },
 
     /// 工具执行结果
-    ToolResult { tool_use_id: String, content: String, is_error: bool },
+    ToolResult {
+        tool_use_id: String,
+        tool_name: String,
+        content: String,
+        is_error: bool,
+    },
 
     /// 模型推理 trace（extended thinking）
     Thinking { thinking: String },
@@ -509,5 +519,5 @@ classDiagram
 
 ---
 
-*创建时间：2026-03-14*
-*OpenFang v0.4.0*
+*创建时间：2026-03-14 (更新于 2026-03-29 v0.5.2)*
+*OpenFang v0.5.2*

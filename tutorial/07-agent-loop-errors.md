@@ -428,12 +428,17 @@ pub struct ProviderState {
 }
 
 pub struct CooldownConfig {
-    base_cooldown_secs: u64,      // 基础 cooldown 时间
-    billing_cooldown_secs: u64,   // 计费错误 cooldown（更长）
-    max_errors_before_cooldown: u32,
-    failure_window_secs: u64,      // 错误计数窗口
-    probe_enabled: bool,
-    probe_interval_secs: u64,
+    pub base_cooldown_secs: u64,           // 基础 cooldown 时间（秒）
+    pub max_cooldown_secs: u64,           // 最大 cooldown 时间（秒）
+    pub backoff_multiplier: f64,           // 指数退避乘数
+    pub max_exponent: u32,                 // 最大指数（防止无限增长）
+    pub billing_base_cooldown_secs: u64,  // 计费错误基础 cooldown（秒）
+    pub billing_max_cooldown_secs: u64,   // 计费错误最大 cooldown（秒）
+    pub billing_multiplier: f64,           // 计费错误退避乘数
+    pub max_errors_before_cooldown: u32,
+    pub failure_window_secs: u64,
+    pub probe_enabled: bool,
+    pub probe_interval_secs: u64,
 }
 ```
 
@@ -532,26 +537,41 @@ pub fn record_failure(&self, provider: &str, is_billing: bool) {
 
     state.error_count += 1;
     state.total_errors_in_window += 1;
+    state.is_billing = is_billing;  // 直接赋值
 
-    if is_billing {
-        state.is_billing = true;
-    }
+    // 每次失败都触发 cooldown，使用指数退避计算
+    let cooldown_secs = self.calculate_cooldown(state.error_count, is_billing);
+    state.cooldown_start = Some(now);
+    state.cooldown_duration = Duration::from_secs(cooldown_secs);
 
-    // 触发 cooldown
-    if state.error_count >= self.config.max_errors_before_cooldown && state.cooldown_start.is_none() {
-        state.cooldown_start = Some(now);
-        state.cooldown_duration = if is_billing {
-            Duration::from_secs(self.config.billing_cooldown_secs)
-        } else {
-            Duration::from_secs(self.config.base_cooldown_secs)
-        };
-        warn!(
-            provider,
-            errors = state.error_count,
-            is_billing,
-            "circuit breaker: provider entered cooldown"
-        );
-    }
+    warn!(
+        provider,
+        errors = state.error_count,
+        is_billing,
+        cooldown_secs,
+        "circuit breaker: provider entered cooldown (exponential backoff)"
+    );
+}
+
+// 指数退避计算
+fn calculate_cooldown(&self, error_count: u32, is_billing: bool) -> u64 {
+    let (base, max, multiplier) = if is_billing {
+        (
+            self.config.billing_base_cooldown_secs,
+            self.config.billing_max_cooldown_secs,
+            self.config.billing_multiplier,
+        )
+    } else {
+        (
+            self.config.base_cooldown_secs,
+            self.config.max_cooldown_secs,
+            self.config.backoff_multiplier,
+        )
+    };
+
+    let exponent = (error_count - 1).min(self.config.max_exponent) as u32;
+    let cooldown = (base as f64) * multiplier.powi(exponent as i32);
+    (cooldown as u64).min(max)
 }
 ```
 
@@ -854,5 +874,5 @@ impl Default for AgentRecoveryConfig {
 
 ---
 
-*创建时间：2026-03-15 (更新于 2026-03-19 v0.4.9)*
-*OpenFang v0.4.9*
+*创建时间：2026-03-15 (更新于 2026-03-29 v0.5.2)*
+*OpenFang v0.5.2*

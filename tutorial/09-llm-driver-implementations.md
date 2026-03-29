@@ -10,12 +10,13 @@
 
 ## 学习目标
 
-- [ ] 掌握 27+ Provider 的配置和分类
+- [ ] 掌握 37+ Provider 的配置和分类
 - [ ] 理解 AnthropicDriver 的实现细节
 - [ ] 理解 OpenAIDriver 的通用适配模式
 - [ ] 掌握 FallbackDriver 的回退机制
 - [ ] 了解特殊 Provider（Claude Code、Copilot）的实现
 - [ ] 了解 Vertex AI 企业版驱动 (v0.5.2 新增)
+- [ ] 了解 Azure OpenAI Provider 驱动 (v0.5.2 新增)
 
 ---
 
@@ -24,7 +25,7 @@
 ### 文件位置
 `crates/openfang-runtime/src/drivers/mod.rs:36-225`
 
-OpenFang 支持 **27+ Provider**，分为以下几类：
+OpenFang 支持 **37+ Provider**，分为以下几类：
 
 ### 1.1 主流云服务商
 
@@ -99,6 +100,7 @@ OpenFang 支持 **27+ Provider**，分为以下几类：
 | `github-copilot` / `copilot` | Token 交换 | GitHub PAT → Copilot API Token |
 | `codex` / `openai-codex` | 凭证同步 | 复用 Codex CLI 的配置 |
 | `vertex-ai` / `vertex` / `google-vertex` | OAuth | GCP 服务账号 OAuth (v0.5.2 新增) |
+| `azure` / `azure-openai` | API Key | Azure OpenAI Service (v0.5.2 新增) |
 
 ---
 
@@ -1138,12 +1140,13 @@ impl HealthCheck {
 
 ## 完成检查清单
 
-- [ ] 掌握 27+ Provider 的配置和分类
+- [ ] 掌握 37+ Provider 的配置和分类
 - [ ] 理解 AnthropicDriver 的实现细节
 - [ ] 理解 OpenAIDriver 的通用适配模式
 - [ ] 掌握 FallbackDriver 的回退机制
 - [ ] 了解特殊 Provider（Claude Code、Copilot）的实现
 - [ ] 了解 Vertex AI 企业版驱动 (v0.5.2 新增)
+- [ ] 了解 Azure OpenAI Provider 驱动 (v0.5.2 新增)
 
 ---
 
