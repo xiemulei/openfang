@@ -11,6 +11,7 @@ use crate::types::{
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::Stream;
+use hmac::KeyInit;
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;

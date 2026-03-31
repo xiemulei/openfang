@@ -7,6 +7,7 @@ use crate::types::{ChannelAdapter, ChannelContent, ChannelMessage, ChannelType, 
 use async_trait::async_trait;
 use chrono::Utc;
 use dashmap::DashMap;
+use futures::stream::TryStreamExt;
 use futures::Stream;
 use lettre::message::Mailbox;
 use lettre::transport::smtp::authentication::Credentials;
@@ -27,9 +28,9 @@ struct PlainAuthenticator {
     password: String,
 }
 
-impl imap::Authenticator for PlainAuthenticator {
+impl async_imap::Authenticator for PlainAuthenticator {
     type Response = String;
-    fn process(&self, _data: &[u8]) -> Self::Response {
+    fn process(&mut self, _data: &[u8]) -> Self::Response {
         // SASL PLAIN: \0<username>\0<password>
         format!("\x00{}\x00{}", self.username, self.password)
     }
@@ -201,25 +202,30 @@ fn extract_text_body(parsed: &mailparse::ParsedMail<'_>) -> String {
         .unwrap_or_default()
 }
 
-/// Fetch unseen emails from IMAP using blocking I/O.
+/// Fetch unseen emails from IMAP using async I/O.
 /// Returns a Vec of (from_addr, subject, message_id, body).
-fn fetch_unseen_emails(
+async fn fetch_unseen_emails(
     host: &str,
     port: u16,
     username: &str,
     password: &str,
     folders: &[String],
 ) -> Result<Vec<(String, String, String, String)>, String> {
-    let tls = native_tls::TlsConnector::builder()
-        .build()
-        .map_err(|e| format!("TLS connector error: {e}"))?;
+    // Connect to the server using standard TCP stream
+    use async_imap::Client;
+    use futures::io::AllowStdIo;
+    use std::net::TcpStream;
 
-    let client =
-        imap::connect((host, port), host, &tls).map_err(|e| format!("IMAP connect failed: {e}"))?;
+    // Create TCP connection
+    let stream =
+        TcpStream::connect((host, port)).map_err(|e| format!("TCP connect failed: {e}"))?;
+
+    // Create IMAP client with AllowStdIo wrapper
+    let client = Client::new(AllowStdIo::new(stream));
 
     // Try LOGIN first; fall back to AUTHENTICATE PLAIN for servers like Lark
     // that reject LOGIN and only support AUTH=PLAIN (SASL).
-    let mut session = match client.login(username, password) {
+    let mut session = match client.login(username, password).await {
         Ok(s) => s,
         Err((login_err, client)) => {
             let authenticator = PlainAuthenticator {
@@ -227,7 +233,8 @@ fn fetch_unseen_emails(
                 password: password.to_string(),
             };
             client
-                .authenticate("PLAIN", &authenticator)
+                .authenticate("PLAIN", authenticator)
+                .await
                 .map_err(|(e, _)| {
                     format!("IMAP login failed: {login_err}; AUTH=PLAIN also failed: {e}")
                 })?
@@ -237,12 +244,12 @@ fn fetch_unseen_emails(
     let mut results = Vec::new();
 
     for folder in folders {
-        if let Err(e) = session.select(folder) {
+        if let Err(e) = session.select(folder).await {
             warn!(folder, error = %e, "IMAP SELECT failed, skipping folder");
             continue;
         }
 
-        let uids = match session.uid_search("UNSEEN") {
+        let uids = match session.uid_search("UNSEEN").await {
             Ok(uids) => uids,
             Err(e) => {
                 warn!(folder, error = %e, "IMAP SEARCH UNSEEN failed");
@@ -263,7 +270,7 @@ fn fetch_unseen_emails(
             .collect::<Vec<_>>()
             .join(",");
 
-        let fetches = match session.uid_fetch(&uid_set, "RFC822") {
+        let fetches = match session.uid_fetch(&uid_set, "RFC822").await {
             Ok(f) => f,
             Err(e) => {
                 warn!(folder, error = %e, "IMAP FETCH failed");
@@ -271,8 +278,14 @@ fn fetch_unseen_emails(
             }
         };
 
-        for fetch in fetches.iter() {
-            let body_bytes = match fetch.body() {
+        // Convert stream to vector
+        let messages: Vec<_> = fetches
+            .try_collect()
+            .await
+            .map_err(|e| format!("Failed to collect fetch results: {e}"))?;
+
+        for message in messages {
+            let body_bytes = match message.body() {
                 Some(b) => b,
                 None => continue,
             };
@@ -295,12 +308,12 @@ fn fetch_unseen_emails(
         }
 
         // Mark fetched messages as Seen
-        if let Err(e) = session.uid_store(&uid_set, "+FLAGS (\\Seen)") {
+        if let Err(e) = session.uid_store(&uid_set, "+FLAGS (\\Seen)").await {
             warn!(error = %e, "Failed to mark emails as Seen");
         }
     }
 
-    let _ = session.logout();
+    let _ = session.logout().await;
     Ok(results)
 }
 
@@ -344,26 +357,19 @@ impl ChannelAdapter for EmailAdapter {
                     _ = tokio::time::sleep(poll_interval) => {}
                 }
 
-                // IMAP operations are blocking I/O — run in spawn_blocking
+                // IMAP operations are now async I/O
                 let host = imap_host.clone();
                 let port = imap_port;
                 let user = username.clone();
                 let pass = password.clone();
                 let fldrs = folders.clone();
 
-                let emails = tokio::task::spawn_blocking(move || {
-                    fetch_unseen_emails(&host, port, &user, pass.as_str(), &fldrs)
-                })
-                .await;
+                let emails = fetch_unseen_emails(&host, port, &user, pass.as_str(), &fldrs).await;
 
                 let emails = match emails {
-                    Ok(Ok(emails)) => emails,
-                    Ok(Err(e)) => {
-                        error!("IMAP poll error: {e}");
-                        continue;
-                    }
+                    Ok(emails) => emails,
                     Err(e) => {
-                        error!("IMAP spawn_blocking panic: {e}");
+                        error!("IMAP poll error: {e}");
                         continue;
                     }
                 };

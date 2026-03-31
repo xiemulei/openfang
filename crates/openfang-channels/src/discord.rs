@@ -285,7 +285,7 @@ impl ChannelAdapter for DiscordAdapter {
 
                             if let Err(e) = ws_tx
                                 .send(tokio_tungstenite::tungstenite::Message::Text(
-                                    serde_json::to_string(&gateway_msg).unwrap(),
+                                    serde_json::to_string(&gateway_msg).unwrap().into(),
                                 ))
                                 .await
                             {
@@ -353,7 +353,7 @@ impl ChannelAdapter for DiscordAdapter {
                             let hb = serde_json::json!({ "op": opcode::HEARTBEAT, "d": seq });
                             let _ = ws_tx
                                 .send(tokio_tungstenite::tungstenite::Message::Text(
-                                    serde_json::to_string(&hb).unwrap(),
+                                    serde_json::to_string(&hb).unwrap().into(),
                                 ))
                                 .await;
                         }

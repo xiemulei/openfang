@@ -32,7 +32,7 @@ tokio-stream = "0.1"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.9"
+toml = "1"
 rmp-serde = "1"
 
 # Error handling
@@ -75,14 +75,14 @@ bytes = "1"
 
 # Futures
 futures = "0.3"
-prost = "0.13"
+prost = "0.14"
 
 # WebSocket client (for Discord/Slack gateway)
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
 url = "2"
 
 # WASM sandbox
-wasmtime = "41"
+wasmtime = "43"
 
 # HTTP server (for API daemon)
 axum = { version = "0.8", features = ["ws", "multipart"] }
@@ -96,17 +96,17 @@ dirs = "6"
 serde_yaml = "0.9"
 
 # JSON5 parsing
-json5 = "0.4"
+json5 = "1"
 
 # Directory walking
 walkdir = "2"
 
 # Security
-sha2 = "0.10"
-sha1 = "0.10"
+sha2 = "0.11"
+sha1 = "0.11"
 aes = "0.8"
 cbc = "0.1"
-hmac = "0.12"
+hmac = "0.13"
 hex = "0.4"
 subtle = "2"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
@@ -117,7 +117,7 @@ zeroize = { version = "1", features = ["derive"] }
 governor = "0.10"
 
 # Interactive CLI
-ratatui = "0.29"
+ratatui = "0.30"
 colored = "3"
 
 # Encryption
@@ -131,22 +131,22 @@ html-escape = "0.2"
 regex-lite = "0.1"
 
 # MCP SDK (official Rust implementation)
-rmcp = { version = "1.2", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+rmcp = { version = "1", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
 
 # Socket options (SO_REUSEADDR)
-socket2 = "0.5"
+socket2 = "0.6"
 
 # Zip archive extraction
 zip = { version = "4", default-features = false, features = ["deflate"] }
 
 # Email (SMTP + IMAP)
 lettre = { version = "0.11", default-features = false, features = ["builder", "hostname", "smtp-transport", "tokio1", "tokio1-rustls-tls"] }
-imap = "2"
+async-imap = "0.11"
 native-tls = { version = "0.2", features = ["vendored"] }
 mailparse = "0.16"
 
 # MQTT client
-rumqttc = "0.24"
+rumqttc = "0.25"
 
 # OpenSSL (vendored = statically compiled, no runtime libssl dependency on Linux)
 openssl = { version = "0.10", features = ["vendored"] }

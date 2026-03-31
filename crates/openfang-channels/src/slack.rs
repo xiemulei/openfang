@@ -279,7 +279,7 @@ impl ChannelAdapter for SlackAdapter {
                                 let ack = serde_json::json!({ "envelope_id": envelope_id });
                                 if let Err(e) = ws_tx
                                     .send(tokio_tungstenite::tungstenite::Message::Text(
-                                        serde_json::to_string(&ack).unwrap(),
+                                        serde_json::to_string(&ack).unwrap().into(),
                                     ))
                                     .await
                                 {
@@ -355,6 +355,11 @@ impl ChannelAdapter for SlackAdapter {
         Ok(())
     }
 
+    async fn stop(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let _ = self.shutdown_tx.send(true);
+        Ok(())
+    }
+
     async fn send_in_thread(
         &self,
         user: &ChannelUser,
@@ -372,11 +377,6 @@ impl ChannelAdapter for SlackAdapter {
                     .await?;
             }
         }
-        Ok(())
-    }
-
-    async fn stop(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let _ = self.shutdown_tx.send(true);
         Ok(())
     }
 }

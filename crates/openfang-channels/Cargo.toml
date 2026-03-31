@@ -35,7 +35,7 @@ regex-lite = "0.1"
 roxmltree = "0.21"
 
 lettre = { workspace = true }
-imap = { workspace = true }
+async-imap = { workspace = true }
 native-tls = { workspace = true }
 mailparse = { workspace = true }
 rumqttc = { workspace = true }

@@ -1,7 +1,7 @@
 //! Stateless session token authentication for the dashboard.
 //! Tokens are HMAC-SHA256 signed and contain username + expiry.
 
-use hmac::{Hmac, Mac};
+use hmac::{KeyInit, Hmac, Mac};
 use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;

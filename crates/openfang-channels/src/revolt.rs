@@ -356,7 +356,7 @@ impl ChannelAdapter for RevoltAdapter {
 
                 if let Err(e) = ws_sink
                     .send(tokio_tungstenite::tungstenite::Message::Text(
-                        auth_msg.to_string(),
+                        auth_msg.to_string().into(),
                     ))
                     .await
                 {
@@ -382,7 +382,7 @@ impl ChannelAdapter for RevoltAdapter {
                             });
                             if let Err(e) = ws_sink
                                 .send(tokio_tungstenite::tungstenite::Message::Text(
-                                    ping.to_string(),
+                                    ping.to_string().into(),
                                 ))
                                 .await
                             {

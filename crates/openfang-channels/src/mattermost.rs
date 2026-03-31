@@ -290,7 +290,7 @@ impl ChannelAdapter for MattermostAdapter {
 
                 if let Err(e) = ws_tx
                     .send(tokio_tungstenite::tungstenite::Message::Text(
-                        serde_json::to_string(&auth_msg).unwrap(),
+                        serde_json::to_string(&auth_msg).unwrap().into(),
                     ))
                     .await
                 {
@@ -423,6 +423,11 @@ impl ChannelAdapter for MattermostAdapter {
         Ok(())
     }
 
+    async fn stop(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let _ = self.shutdown_tx.send(true);
+        Ok(())
+    }
+
     async fn send_in_thread(
         &self,
         user: &ChannelUser,
@@ -460,11 +465,6 @@ impl ChannelAdapter for MattermostAdapter {
             }
         }
 
-        Ok(())
-    }
-
-    async fn stop(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let _ = self.shutdown_tx.send(true);
         Ok(())
     }
 }

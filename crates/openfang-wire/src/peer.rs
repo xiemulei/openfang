@@ -13,7 +13,7 @@ use crate::registry::{PeerEntry, PeerRegistry, PeerState};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::net::SocketAddr;
 use std::sync::Arc;

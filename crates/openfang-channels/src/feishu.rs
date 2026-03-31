@@ -765,7 +765,7 @@ impl FeishuAdapter {
                 msg = read.next() => {
                     match msg {
                         Some(Ok(Message::Binary(data))) => {
-                            let frame = match FeishuWsFrame::decode(data.as_slice()) {
+                            let frame = match FeishuWsFrame::decode(data) {
                                 Ok(f) => f,
                                 Err(e) => {
                                     warn!("{label} WS decode frame failed: {e}");
@@ -811,7 +811,7 @@ impl FeishuAdapter {
                 }
                 _ = ping_interval.tick() => {
                     let ping_frame = build_ping_frame(service_id);
-                    write.send(Message::Binary(ping_frame.encode_to_vec())).await?;
+                    write.send(Message::Binary(ping_frame.encode_to_vec().into())).await?;
                 }
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
@@ -867,7 +867,7 @@ impl FeishuAdapter {
                     if event_dedup.check_and_insert(event_id) {
                         let ack_frame = build_ack_frame(&frame, code);
                         write
-                            .send(Message::Binary(ack_frame.encode_to_vec()))
+                            .send(Message::Binary(ack_frame.encode_to_vec().into()))
                             .await?;
                         return Ok(());
                     }
@@ -888,7 +888,7 @@ impl FeishuAdapter {
 
         let ack_frame = build_ack_frame(&frame, code);
         write
-            .send(Message::Binary(ack_frame.encode_to_vec()))
+            .send(Message::Binary(ack_frame.encode_to_vec().into()))
             .await?;
         Ok(())
     }

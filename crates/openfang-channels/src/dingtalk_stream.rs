@@ -481,7 +481,7 @@ where
 
     match frame.msg_type.as_str() {
         "SYSTEM" if topic == "ping" => {
-            let _ = sink.send(Message::Text(make_ack(mid, "pong"))).await;
+            let _ = sink.send(Message::Text(make_ack(mid, "pong").into())).await;
         }
         "CALLBACK" | "EVENT" => {
             let data_str = frame.data.to_string();
@@ -548,10 +548,10 @@ where
                 }
             }
 
-            let _ = sink.send(Message::Text(make_ack(mid, topic))).await;
+            let _ = sink.send(Message::Text(make_ack(mid, topic).into())).await;
         }
         _ => {
-            let _ = sink.send(Message::Text(make_ack(mid, topic))).await;
+            let _ = sink.send(Message::Text(make_ack(mid, topic).into())).await;
         }
     }
 }

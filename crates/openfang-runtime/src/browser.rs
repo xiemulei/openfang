@@ -171,7 +171,7 @@ impl CdpConnection {
         self.write
             .lock()
             .await
-            .send(WsMessage::Text(msg.to_string()))
+            .send(WsMessage::Text(msg.to_string().into()))
             .await
             .map_err(|e| format!("CDP send failed: {e}"))?;
 
