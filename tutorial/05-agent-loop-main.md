@@ -1,6 +1,6 @@
 # 第 5 节：Agent 循环 — 主流程
 
-> **版本**: v0.5.2 (2026-03-29)
+> **版本**: v0.5.5 (2026-03-31)
 > **核心文件**: `crates/openfang-runtime/src/agent_loop.rs`
 
 ## 学习目标
@@ -443,6 +443,93 @@ StopReason::MaxTokens => {
 
 **默认阈值**：`MAX_CONTINUATIONS = 5`
 
+### 5.4 工具调用恢复增强 (v0.5.5 新增)
+
+#### 5.4.1 文本工具调用恢复
+
+```rust
+// agent_loop.rs:434-461
+if matches!(
+    response.stop_reason,
+    StopReason::EndTurn | StopReason::StopSequence
+) && response.tool_calls.is_empty() {
+    let recovered = recover_text_tool_calls(&response.text(), available_tools);
+    if !recovered.is_empty() {
+        info!(
+            count = recovered.len(),
+            "Recovered text-based tool calls → promoting to ToolUse"
+        );
+        response.tool_calls = recovered;
+        response.stop_reason = StopReason::ToolUse;
+        // Build ToolUse content blocks from recovered calls
+        let mut new_blocks: Vec<ContentBlock> = Vec::new();
+        for tc in &response.tool_calls {
+            new_blocks.push(ContentBlock::ToolUse {
+                id: tc.id.clone(),
+                name: tc.name.clone(),
+                input: tc.input.clone(),
+                provider_metadata: None,
+            });
+        }
+        response.content = new_blocks;
+    }
+}
+```
+
+#### 5.4.2 支持的工具调用格式
+
+v0.5.5 版本支持 14 种工具调用格式，包括：
+
+1. `<function=tool_name>{"key":"value"}</function>`
+2. `<function>tool_name{"key":"value"}</function>`
+3. `<tool>tool_name{"key":"value"}</tool>`
+4. Markdown 代码块：```
+tool_name {"key":"value"}
+```
+5. 反引号包裹：`tool_name {"key":"value"}`
+6. `[TOOL_CALL]{...}[/TOOL_CALL]` 块
+7. `<tool_call>{"name":"tool","arguments":{...}}</tool_call>`
+8. 裸 JSON 对象：`{"name":"tool","arguments":{...}}`
+9. `<function name="tool" parameters="{...}" />` (XML 属性风格)
+10. `<|plugin|>...<|endofblock|>` (Qwen/ChatGLM 格式)
+11. `Action: tool\nAction Input: {"key":"value"}` (ReAct 风格)
+12. `tool_name\n{"key":"value"}` (Llama 4 Scout 风格)
+13. `<tool_use>{"name":"tool","arguments":{...}}</tool_use>` (Llama 3.1+ 风格)
+14. `<function=tool><parameter=name>value</parameter></function>` (嵌套 XML 参数风格)
+
+#### 5.4.3 嵌套 XML 参数解析
+
+```rust
+// agent_loop.rs:2775-2801
+fn parse_xml_parameter_blocks(text: &str) -> Option<serde_json::Value> {
+    use regex_lite::Regex;
+
+    let re = Regex::new(r#"(?s)<parameter=([A-Za-z0-9_.:-]+)\>\s*(.*?)\s*<\/parameter>"#).unwrap();
+    let mut params = serde_json::Map::new();
+
+    for caps in re.captures_iter(text) {
+        let Some(name) = caps.get(1).map(|m| m.as_str().trim()) else {
+            continue;
+        };
+        if name.is_empty() {
+            continue;
+        }
+
+        let raw_value = caps.get(2).map(|m| m.as_str()).unwrap_or_default();
+        let value_text = unescape_xml_entities(raw_value).trim().to_string();
+        let value = 
+            serde_json::from_str(&value_text).unwrap_or(serde_json::Value::String(value_text));
+        params.insert(name.to_string(), value);
+    }
+
+    if params.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(params))
+    }
+}
+```
+
 ---
 
 ## 6. AgentLoopResult — 循环结果
@@ -573,5 +660,5 @@ Vector Search (embedding) → Text Search (fallback)
 
 ---
 
-*创建时间：2026-03-15 (更新于 2026-03-29 v0.5.2)*
-*OpenFang v0.5.2*
+*创建时间：2026-03-15 (更新于 2026-03-31 v0.5.5)*
+*OpenFang v0.5.5*

@@ -620,14 +620,14 @@ pub fn check_agents(
 
 ### 11.4 恢复状态机
 
-```
-Running ──[超时无响应]──> Crashed ──[恢复尝试]──> Running
-    ^                                                    │
-    │                    [已达最大恢复次数]                 │
-    └────────────── [成功恢复，tracker.reset()] <────────┘
-                         │
-                         v
-                    Terminated（死亡，需手动重启）
+```mermaid
+graph TD
+    Running -->|超时无响应| Crashed
+    Crashed -->|恢复尝试| Running
+    Crashed -->|已达最大恢复次数| Terminated
+    Running -->|成功恢复，tracker.reset()| Running
+    
+    Terminated[Terminated（死亡，需手动重启）]
 ```
 
 ### 11.5 启动流程
@@ -669,7 +669,165 @@ default_timeout_secs = 180  # 默认无响应超时（秒）
 
 ---
 
-## 12. API 服务器启动
+## 12. Workspace Identity Files — 工作空间身份文件 (v0.5.5 新增)
+
+### 文件位置
+`crates/openfang-kernel/src/kernel.rs:272-428`
+
+### 核心功能
+
+Workspace Identity Files 是为每个 Agent 自动生成的一组文件，用于定义 Agent 的身份、行为指南和记忆存储。
+
+### 生成的文件
+
+| 文件名 | 用途 | 内容说明 |
+|--------|------|----------|
+| `SOUL.md` | 核心身份 | Agent 名称、描述和核心价值观 |
+| `USER.md` | 用户信息 | 存储用户偏好和个人信息 |
+| `TOOLS.md` | 工具环境 | Agent 特定的环境说明 |
+| `MEMORY.md` | 长期记忆 | 跨会话保存的重要知识 |
+| `AGENTS.md` | 行为指南 | Agent 行为规范和工具使用协议 |
+| `BOOTSTRAP.md` | 首次运行引导 | 新用户交互的标准流程 |
+| `IDENTITY.md` | 视觉身份 | 头像、表情、颜色等视觉配置 |
+| `HEARTBEAT.md` | 心跳检查清单 | 自主 Agent 的定期检查项（仅自主 Agent） |
+
+### 实现细节
+
+```rust
+/// Generate workspace identity files for an agent (SOUL.md, USER.md, TOOLS.md, MEMORY.md).
+/// Uses `create_new` to never overwrite existing files (preserves user edits).
+fn generate_identity_files(workspace: &Path, manifest: &AgentManifest) {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+
+    let soul_content = format!(
+        "# Soul\n\n"
+        "You are {}. {}\n"
+        "Be genuinely helpful. Have opinions. Be resourceful before asking.\n"
+        "Treat user data with respect \u{2014} you are a guest in their life.\n",
+        manifest.name,
+        if manifest.description.is_empty() {
+            "You are a helpful AI agent."
+        } else {
+            &manifest.description
+        }
+    );
+
+    // ... 其他文件内容生成 ...
+
+    let files: &[(&str, &str)] = &[
+        ("SOUL.md", &soul_content),
+        ("USER.md", user_content),
+        ("TOOLS.md", tools_content),
+        ("MEMORY.md", memory_content),
+        ("AGENTS.md", agents_content),
+        ("BOOTSTRAP.md", &bootstrap_content),
+        ("IDENTITY.md", &identity_content),
+    ];
+
+    // 条件生成 HEARTBEAT.md 用于自主代理
+    let heartbeat_content = if manifest.autonomous.is_some() {
+        Some(
+            "# Heartbeat Checklist\n\n"
+            "<!-- Proactive reminders to check during heartbeat cycles -->\n\n"
+            "## Every Heartbeat\n"
+            "- [ ] Check for pending tasks or messages\n"
+            "- [ ] Review memory for stale items\n\n"
+            "## Daily\n"
+            "- [ ] Summarize today's activity for the user\n\n"
+            "## Weekly\n"
+            "- [ ] Archive old sessions and clean up memory\n"
+                .to_string(),
+        )
+    } else {
+        None
+    };
+
+    // 写入文件（仅当文件不存在时）
+    for (filename, content) in files {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(workspace.join(filename))
+        {
+            Ok(mut f) => {
+                let _ = f.write_all(content.as_bytes());
+            }
+            Err(_) => {
+                // File already exists — preserve user edits
+            }
+        }
+    }
+
+    // Write HEARTBEAT.md for autonomous agents
+    if let Some(ref hb) = heartbeat_content {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(workspace.join("HEARTBEAT.md"))
+        {
+            Ok(mut f) => {
+                let _ = f.write_all(hb.as_bytes());
+            }
+            Err(_) => {
+                // File already exists — preserve user edits
+            }
+        }
+    }
+}
+```
+
+### 安全特性
+
+- **文件大小限制**: `read_identity_file` 函数限制文件大小为 32KB，防止提示填充攻击
+- **路径遍历保护**: 确保读取的文件路径在工作空间内
+- **内容截断**: 超长内容会被安全截断
+
+### 工作空间目录结构
+
+```
+agent_workspace/
+├── data/         # 数据文件
+├── output/       # 输出文件
+├── sessions/     # 会话历史
+├── skills/       # 工作空间技能
+├── logs/         # 日志文件
+├── memory/       # 记忆存储
+├── SOUL.md       # 核心身份
+├── USER.md       # 用户信息
+├── TOOLS.md      # 工具环境
+├── MEMORY.md     # 长期记忆
+├── AGENTS.md     # 行为指南
+├── BOOTSTRAP.md  # 首次运行引导
+├── IDENTITY.md   # 视觉身份
+└── HEARTBEAT.md  # 心跳检查清单（自主 Agent）
+```
+
+### 每日记忆日志
+
+```rust
+/// Append an assistant response summary to the daily memory log (best-effort, append-only).
+/// Caps daily log at 1MB to prevent unbounded growth.
+fn append_daily_memory_log(workspace: &Path, response: &str) {
+    // ... 实现细节 ...
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let log_path = workspace.join("memory").join(format!("{today}.md"));
+    // 安全：限制每日日志大小为 1MB
+    if let Ok(metadata) = std::fs::metadata(&log_path) {
+        if metadata.len() > 1_048_576 {
+            return;
+        }
+    }
+    // 截断长响应
+    let summary = openfang_types::truncate_str(trimmed, 500);
+    // 追加到日志文件
+    // ...
+}
+```
+
+---
+
+## 13. API 服务器启动
 
 ### 文件位置
 `crates/openfang-api/src/server.rs`
@@ -715,10 +873,11 @@ pub fn run_daemon(kernel: Arc<OpenFangKernel>, listen_addr: &str, ...) {
 | 8 | Skill Registry | 技能注册表 |
 | 9 | Hand Registry | 自主代理注册表 |
 | 10 | Extension Registry | 扩展注册表 |
-| 11 | API Server | HTTP 服务 |
-| 12 | **Heartbeat Monitor** | **Agent 健康检查 (v0.5.2 新增)** |
+| 11 | **Workspace Identity Files** | **工作空间身份文件 (v0.5.5 新增)** |
+| 12 | API Server | HTTP 服务 |
+| 13 | **Heartbeat Monitor** | **Agent 健康检查 (v0.5.2 新增)** |
 
-> **注意**：步骤 12 仅在 Daemon 模式下执行，属于 `start_background_agents()` 的一部分。
+> **注意**：步骤 13 仅在 Daemon 模式下执行，属于 `start_background_agents()` 的一部分。
 
 ---
 

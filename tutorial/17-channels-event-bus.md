@@ -265,12 +265,16 @@ pub enum LifecyclePhase {
 
 ### 状态流转图
 
-```
-Starting → Idle → Processing → ExecutingTool → Processing → Idle
-                     ↓
-              WaitingForInput → Processing → Idle
-                     ↓
-                  Stopping
+```mermaid
+graph TD
+    Starting --> Idle
+    Idle --> Processing
+    Processing --> ExecutingTool
+    ExecutingTool --> Processing
+    Processing --> Idle
+    Processing --> WaitingForInput
+    WaitingForInput --> Processing
+    WaitingForInput --> Stopping
 ```
 
 ---

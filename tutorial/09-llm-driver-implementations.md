@@ -1,12 +1,14 @@
 # 第 9 节：LLM Driver — 实现
 
-> **版本**: v0.5.2 (2026-03-29)
+> **版本**: v0.5.5 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-runtime/src/drivers/mod.rs`
 > - `crates/openfang-runtime/src/drivers/anthropic.rs`
 > - `crates/openfang-runtime/src/drivers/openai.rs`
 > - `crates/openfang-runtime/src/drivers/vertex.rs` (v0.5.2 新增)
 > - `crates/openfang-runtime/src/drivers/fallback.rs`
+> - `crates/openfang-runtime/src/model_catalog.rs`
+> - `crates/openfang-types/src/model_catalog.rs`
 
 ## 学习目标
 
@@ -1140,6 +1142,221 @@ impl HealthCheck {
 
 ---
 
+## 11. Model Catalog — 模型目录 (v0.5.5 新增)
+
+### 文件位置
+- `crates/openfang-runtime/src/model_catalog.rs`
+- `crates/openfang-types/src/model_catalog.rs`
+
+### 核心功能
+
+Model Catalog 是一个 comprehensive 的模型注册表，提供以下功能：
+
+- **130+ 内置模型**：覆盖 28+ 个 Provider
+- **模型别名解析**：支持简短别名（如 `sonnet` → `claude-sonnet-4-6`）
+- **认证状态检测**：自动检测 API Key 配置状态
+- **定价信息**：提供模型的输入/输出 token 成本
+- **模型能力标记**：工具调用、视觉、流式支持等
+- **动态模型发现**：支持本地模型的动态发现
+- **自定义模型**：支持运行时添加和保存自定义模型
+
+### 模型分类
+
+```rust
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelTier {
+    /// 前沿模型（如 Claude Opus, GPT-4.1）
+    Frontier,
+    /// 智能模型（如 Claude Sonnet, Gemini 2.5 Flash）
+    Smart,
+    /// 平衡速度/成本的模型（如 GPT-4o-mini, Groq Llama）
+    #[default]
+    Balanced,
+    /// 最快、最便宜的模型
+    Fast,
+    /// 本地模型（Ollama, vLLM, LM Studio）
+    Local,
+    /// 运行时添加的自定义模型
+    Custom,
+}
+```
+
+### 认证状态
+
+```rust
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthStatus {
+    /// API key 已配置
+    Configured,
+    /// API key 缺失
+    #[default]
+    Missing,
+    /// 无需 API key（本地 Provider）
+    NotRequired,
+}
+```
+
+### 核心结构体
+
+```rust
+/// 模型目录中的单个模型条目
+pub struct ModelCatalogEntry {
+    /// 规范模型标识符
+    pub id: String,
+    /// 人类可读的显示名称
+    pub display_name: String,
+    /// Provider 标识符
+    pub provider: String,
+    /// 能力等级
+    pub tier: ModelTier,
+    /// 上下文窗口大小（tokens）
+    pub context_window: u64,
+    /// 最大输出 tokens
+    pub max_output_tokens: u64,
+    /// 每百万输入 tokens 成本（USD）
+    pub input_cost_per_m: f64,
+    /// 每百万输出 tokens 成本（USD）
+    pub output_cost_per_m: f64,
+    /// 是否支持工具/函数调用
+    pub supports_tools: bool,
+    /// 是否支持视觉/图像输入
+    pub supports_vision: bool,
+    /// 是否支持流式响应
+    pub supports_streaming: bool,
+    /// 模型别名
+    pub aliases: Vec<String>,
+}
+
+/// Provider 元数据
+pub struct ProviderInfo {
+    /// Provider 标识符
+    pub id: String,
+    /// 人类可读的显示名称
+    pub display_name: String,
+    /// API key 环境变量名称
+    pub api_key_env: String,
+    /// 默认 Base URL
+    pub base_url: String,
+    /// 是否需要 API key
+    pub key_required: bool,
+    /// 运行时检测的认证状态
+    pub auth_status: AuthStatus,
+    /// 该 Provider 在目录中的模型数量
+    pub model_count: usize,
+}
+```
+
+### 主要方法
+
+```rust
+impl ModelCatalog {
+    /// 创建包含内置模型和 Provider 的目录
+    pub fn new() -> Self { ... }
+    
+    /// 检测哪些 Provider 有 API key 配置
+    pub fn detect_auth(&mut self) { ... }
+    
+    /// 列出所有模型
+    pub fn list_models(&self) -> &[ModelCatalogEntry] { ... }
+    
+    /// 通过 ID、显示名称或别名查找模型
+    pub fn find_model(&self, id_or_alias: &str) -> Option<&ModelCatalogEntry> { ... }
+    
+    /// 为特定 Provider 查找模型
+    pub fn find_model_for_provider(&self, id_or_alias: &str, provider: &str) -> Option<&ModelCatalogEntry> { ... }
+    
+    /// 解析别名为规范模型 ID
+    pub fn resolve_alias(&self, alias: &str) -> Option<&str> { ... }
+    
+    /// 列出所有 Provider
+    pub fn list_providers(&self) -> &[ProviderInfo] { ... }
+    
+    /// 按 Provider 列出模型
+    pub fn models_by_provider(&self, provider: &str) -> Vec<&ModelCatalogEntry> { ... }
+    
+    /// 获取 Provider 的默认模型
+    pub fn default_model_for_provider(&self, provider: &str) -> Option<String> { ... }
+    
+    /// 列出可用的模型（来自已配置的 Provider）
+    pub fn available_models(&self) -> Vec<&ModelCatalogEntry> { ... }
+    
+    /// 获取模型定价
+    pub fn pricing(&self, model_id: &str) -> Option<(f64, f64)> { ... }
+    
+    /// 为 Provider 设置自定义 Base URL
+    pub fn set_provider_url(&mut self, provider: &str, url: &str) -> bool { ... }
+    
+    /// 应用 Provider URL 覆盖
+    pub fn apply_url_overrides(&mut self, overrides: &HashMap<String, String>) { ... }
+    
+    /// 按等级过滤模型
+    pub fn models_by_tier(&self, tier: ModelTier) -> Vec<&ModelCatalogEntry> { ... }
+    
+    /// 合并从本地 Provider 发现的模型
+    pub fn merge_discovered_models(&mut self, provider: &str, model_ids: &[String]) { ... }
+    
+    /// 添加自定义模型
+    pub fn add_custom_model(&mut self, entry: ModelCatalogEntry) -> bool { ... }
+    
+    /// 移除自定义模型
+    pub fn remove_custom_model(&mut self, model_id: &str) -> bool { ... }
+    
+    /// 从 JSON 文件加载自定义模型
+    pub fn load_custom_models(&mut self, path: &std::path::Path) { ... }
+    
+    /// 保存所有自定义模型到 JSON 文件
+    pub fn save_custom_models(&self, path: &std::path::Path) -> Result<(), String> { ... }
+}
+```
+
+### 内置 Provider
+
+Model Catalog 支持以下 Provider 类别：
+
+1. **主流云服务商**：Anthropic, OpenAI, Google Gemini, Groq
+2. **聚合平台**：OpenRouter, Together AI, Fireworks AI, Replicate
+3. **高速推理服务**：Groq, Cerebras, Chutes.ai
+4. **本地/自托管**：Ollama, vLLM, LM Studio, Lemonade
+5. **中国服务商**：DeepSeek, Moonshot (Kimi), Qwen, MiniMax, Zhipu (GLM), Qianfan, Volcengine
+6. **其他云服务商**：Mistral AI, Cohere, AI21 Labs, Perplexity, xAI, SambaNova, Hugging Face, NVIDIA NIM, Venice.ai
+7. **特殊 Provider**：GitHub Copilot, Claude Code CLI, Qwen Code CLI, Codex, Azure OpenAI, AWS Bedrock
+
+### 模型别名系统
+
+Model Catalog 提供了丰富的模型别名，方便用户使用简短名称：
+
+| 别名 | 解析到 | Provider |
+|------|--------|----------|
+| `sonnet` | `claude-sonnet-4-6` | Anthropic |
+| `haiku` | `claude-haiku-4-5-20251001` | Anthropic |
+| `opus` | `claude-opus-4-6` | Anthropic |
+| `gpt4` | `gpt-4o` | OpenAI |
+| `gpt4-mini` | `gpt-4o-mini` | OpenAI |
+| `flash` | `gemini-2.5-flash` | Google |
+| `llama` | `llama-3.3-70b-versatile` | Groq |
+| `mistral` | `mistral-large-latest` | Mistral AI |
+| `codestral` | `codestral-latest` | Mistral AI |
+| `kimi` | `kimi-k2` | Moonshot |
+| `free` | `openrouter/meta-llama/llama-3.1-8b-instruct:free` | OpenRouter |
+
+### 使用场景
+
+1. **模型选择**：通过别名快速选择合适的模型
+2. **成本估算**：使用定价信息估算 API 调用成本
+3. **能力检查**：确认模型是否支持特定功能（工具调用、视觉等）
+4. **动态发现**：自动发现本地运行的模型
+5. **自定义模型**：添加和管理自定义模型配置
+
+### 安全特性
+
+- **API Key 检测**：只检查存在性，不存储实际密钥
+- **本地服务检测**：通过 HTTP 探针检测本地服务可用性
+- **灵活配置**：支持自定义 Provider URL 和模型
+
+---
+
 ## 完成检查清单
 
 - [ ] 掌握 37+ Provider 的配置和分类
@@ -1149,6 +1366,7 @@ impl HealthCheck {
 - [ ] 了解特殊 Provider（Claude Code、Copilot）的实现
 - [ ] 了解 Vertex AI 企业版驱动 (v0.5.2 新增)
 - [ ] 了解 Azure OpenAI Provider 驱动 (v0.5.2 新增)
+- [ ] 掌握 Model Catalog 的功能和使用方法 (v0.5.5 新增)
 
 ---
 
@@ -1158,5 +1376,5 @@ impl HealthCheck {
 
 ---
 
-*创建时间：2026-03-15 (更新于 2026-03-29 v0.5.2)*
-*OpenFang v0.5.2*
+*创建时间：2026-03-15 (更新于 2026-03-29 v0.5.5)*
+*OpenFang v0.5.5*

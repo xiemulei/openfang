@@ -546,21 +546,24 @@ pub fn validate_capability_inheritance(
 
 **架构**:
 
-```
-┌─────────────────────────────────────────────────────┐
-│              WasmSandbox Engine                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌────────────┐ │
-│  │ Fuel Metering│  │ Epoch Timer  │  │ Capability │ │
-│  │ (CPU 预算)   │  │ (墙钟超时)   │  │ 检查      │ │
-│  └──────────────┘  └──────────────┘  └────────────┘ │
-│                    ↓                                │
-│           ┌───────────────────┐                     │
-│           │   GuestState      │                     │
-│           │  - capabilities   │                     │
-│           │  - kernel handle  │                     │
-│           │  - agent_id       │                     │
-│           └───────────────────┘                     │
-└─────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph WasmSandbox[WasmSandbox Engine]
+        FuelMetering[Fuel Metering<br/>(CPU 预算)]
+        EpochTimer[Epoch Timer<br/>(墙钟超时)]
+        CapabilityCheck[Capability<br/>检查]
+        GuestState[GuestState]
+        
+        FuelMetering --> GuestState
+        EpochTimer --> GuestState
+        CapabilityCheck --> GuestState
+        
+        subgraph GuestStateDetails[GuestState 详情]
+            Capabilities[- capabilities]
+            KernelHandle[- kernel handle]
+            AgentId[- agent_id]
+        end
+    end
 ```
 
 **安全特性**:
@@ -1009,37 +1012,70 @@ fn test_capability_inheritance_escalation_denied() {
 
 ### 8.1 纵深防御（Defense in Depth）
 
-```
-┌────────────────────────────────────────────────────────────┐
-│ Layer 1: Shell 元字符检查                                  │
-│ - 阻止所有命令注入字符（;, |, $(), `, etc.）               │
-├────────────────────────────────────────────────────────────┤
-│ Layer 2: 污点追踪检查                                       │
-│ - 检测外部数据注入模式（curl, wget, base64, eval）         │
-│ - TaintSink 策略检查                                        │
-├────────────────────────────────────────────────────────────┤
-│ Layer 3: 能力检查                                           │
-│ - Capability::ShellExec 白名单匹配                          │
-├────────────────────────────────────────────────────────────┤
-│ Layer 4: 沙箱隔离                                           │
-│ - 子进程：环境清理、进程树 Kill                            │
-│ - WASM: Fuel 限制、Capability 检查                          │
-│ - Docker：资源限制、Capability 删除、网络隔离               │
-└────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph DefenseInDepth[纵深防御]
+        Layer1[Layer 1: Shell 元字符检查]
+        Layer2[Layer 2: 污点追踪检查]
+        Layer3[Layer 3: 能力检查]
+        Layer4[Layer 4: 沙箱隔离]
+        
+        Layer1 --> Layer2
+        Layer2 --> Layer3
+        Layer3 --> Layer4
+        
+        subgraph Layer1Details[Layer 1 详情]
+            L1a[阻止所有命令注入字符（;, |, $(), `, etc.）]
+        end
+        
+        subgraph Layer2Details[Layer 2 详情]
+            L2a[检测外部数据注入模式（curl, wget, base64, eval）]
+            L2b[TaintSink 策略检查]
+        end
+        
+        subgraph Layer3Details[Layer 3 详情]
+            L3a[Capability::ShellExec 白名单匹配]
+        end
+        
+        subgraph Layer4Details[Layer 4 详情]
+            L4a[子进程：环境清理、进程树 Kill]
+            L4b[WASM: Fuel 限制、Capability 检查]
+            L4c[Docker：资源限制、Capability 删除、网络隔离]
+        end
+    end
 ```
 
 ### 8.2 污点传播模型
 
-```
-数据流：
-  外部网络响应 → TaintLabel::ExternalNetwork
-                 ↓
-  拼接/处理后 → 标签合并（merge_taint）
-                 ↓
-  流入 shell_exec → check_sink() → TaintViolation!
-
-合法流程：
-  内部生成的命令 → 无污点标签 → check_sink() → OK
+```mermaid
+flowchart TD
+    subgraph TaintFlow[污点传播流程]
+        ExternalResponse[外部网络响应]
+        TaintLabel[添加 TaintLabel::ExternalNetwork]
+        Process[拼接/处理后]
+        MergeTaint[标签合并（merge_taint）]
+        ShellExec[流入 shell_exec]
+        CheckSink[check_sink()]
+        TaintViolation[TaintViolation!]
+        
+        ExternalResponse --> TaintLabel
+        TaintLabel --> Process
+        Process --> MergeTaint
+        MergeTaint --> ShellExec
+        ShellExec --> CheckSink
+        CheckSink --> TaintViolation
+    end
+    
+    subgraph LegalFlow[合法流程]
+        InternalCommand[内部生成的命令]
+        NoTaint[无污点标签]
+        CheckSink2[check_sink()]
+        OK[OK]
+        
+        InternalCommand --> NoTaint
+        NoTaint --> CheckSink2
+        CheckSink2 --> OK
+    end
 ```
 
 ### 8.3 能力匹配规则

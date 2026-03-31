@@ -503,34 +503,29 @@ Session Key (hex 字符串)
 
 ### 流程图
 
-```
-Client (发起连接)                        Server (监听连接)
-    │                                          │
-    │  1. TCP connect()                        │
-    │────────────────────────────────────────→│
-    │                                          │
-    │  2. Handshake Request                    │
-    │     { node_id, node_name, version,       │
-    │       agents, nonce, auth_hmac }         │
-    │────────────────────────────────────────→│
-    │                                          │
-    │                                          │ 验证 nonce (防重放)
-    │                                          │ 验证 HMAC (认证身份)
-    │                                          │
-    │  3. HandshakeAck Response                │
-    │     { node_id, node_name, version,       │
-    │       agents, nonce, auth_hmac }         │
-    │←─────────────────────────────────────────│
-    │                                          │
-    │ 验证 nonce (防重放)                       │
-    │ 验证 HMAC (认证身份)                       │
-    │ 派生会话密钥                               │
-    │                                          │ 派生会话密钥
-    │                                          │
-    │  4. 开始加密通信                          │
-    │←────────────────────────────────────────→│
-    │     (所有消息使用 per-message HMAC)       │
-    │                                          │
+```mermaid
+sequenceDiagram
+    participant Client as 客户端
+    participant Server as 服务器
+    
+    Client->>Server: 1. TCP connect()
+    Client->>Server: 2. Handshake Request
+    Note right of Client: { node_id, node_name, version, agents, nonce, auth_hmac }
+    
+    Note left of Server: 验证 nonce (防重放)
+    Note left of Server: 验证 HMAC (认证身份)
+    
+    Server->>Client: 3. HandshakeAck Response
+    Note left of Server: { node_id, node_name, version, agents, nonce, auth_hmac }
+    
+    Note right of Client: 验证 nonce (防重放)
+    Note right of Client: 验证 HMAC (认证身份)
+    Note right of Client: 派生会话密钥
+    Note left of Server: 派生会话密钥
+    
+    Client->>Server: 4. 开始加密通信
+    Note over Client,Server: 所有消息使用 per-message HMAC
+    Server->>Client: 加密通信
 ```
 
 ### 客户端握手代码

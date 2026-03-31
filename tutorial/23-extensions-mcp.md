@@ -1,6 +1,6 @@
 # 第 23 节：Extensions 系统 — MCP 集成
 
-> **版本**: v0.5.2 (2026-03-29)
+> **版本**: v0.5.5 (2026-03-29)
 > **核心文件**: `crates/openfang-extensions/`, `crates/openfang-runtime/src/mcp.rs`
 
 ## 学习目标
@@ -502,9 +502,17 @@ pub fn default_client_ids() -> HashMap<&'static str, &'static str> {
 
 ## 6. 健康监控 (Health Monitor)
 
-### 6.1 架构设计
+### 6.1 核心功能
 
-HealthMonitor 使用 DashMap 实现线程安全的健康状态跟踪：
+Health Monitor 提供以下核心功能：
+
+- **实时健康状态跟踪**：监控每个 MCP 集成的连接状态
+- **自动重连机制**：当连接失败时自动尝试重连
+- **指数退避策略**：避免频繁重连导致的系统压力
+- **详细的健康指标**：记录工具数量、连续失败次数、连接持续时间等
+- **线程安全设计**：使用 DashMap 实现并发安全的状态管理
+
+### 6.2 架构设计
 
 ```rust
 // crates/openfang-extensions/src/health.rs:105-111
@@ -516,14 +524,14 @@ pub struct HealthMonitor {
 }
 ```
 
-### 6.2 健康状态记录
+### 6.3 健康状态记录
 
 ```rust
 // crates/openfang-extensions/src/health.rs:13-34
 pub struct IntegrationHealth {
-    pub id: String,
-    pub status: IntegrationStatus,
-    pub tool_count: usize,           // 可用工具数量
+    pub id: String,               // 集成 ID
+    pub status: IntegrationStatus, // 当前状态
+    pub tool_count: usize,         // 可用工具数量
     pub last_ok: Option<DateTime<Utc>>,  // 最后成功时间
     pub last_error: Option<String>,  // 最后错误消息
     pub consecutive_failures: u32,   // 连续失败次数
@@ -533,7 +541,34 @@ pub struct IntegrationHealth {
 }
 ```
 
-### 6.3 指数退避重连
+### 6.4 健康状态枚举
+
+```rust
+// IntegrationStatus 定义（推断自使用）
+enum IntegrationStatus {
+    Available,     // 已注册但未连接
+    Ready,         // 已连接且健康
+    Error(String), // 出现错误
+}
+```
+
+### 6.5 配置选项
+
+```rust
+// crates/openfang-extensions/src/health.rs:82-92
+pub struct HealthMonitorConfig {
+    /// 是否启用自动重连
+    pub auto_reconnect: bool,           // 默认: true
+    /// 最大重连尝试次数
+    pub max_reconnect_attempts: u32,    // 默认: 10
+    /// 最大退避时间（秒）
+    pub max_backoff_secs: u64,          // 默认: 300 (5分钟)
+    /// 健康检查间隔（秒）
+    pub check_interval_secs: u64,       // 默认: 60
+}
+```
+
+### 6.6 指数退避重连
 
 ```rust
 // crates/openfang-extensions/src/health.rs:158-163
@@ -554,9 +589,10 @@ pub fn backoff_duration(&self, attempt: u32) -> Duration {
 | 3 | 20 秒 |
 | 4 | 40 秒 |
 | 5 | 80 秒 |
-| 6+ | 160-300 秒 (上限) |
+| 6 | 160 秒 |
+| 7+ | 300 秒 (上限) |
 
-### 6.4 重连逻辑
+### 6.7 重连逻辑
 
 ```rust
 // crates/openfang-extensions/src/health.rs:165-176
@@ -577,6 +613,98 @@ pub fn should_reconnect(&self, id: &str) -> bool {
 1. 自动重连已启用
 2. 状态为 Error
 3. 未达到最大重连次数 (默认 10 次)
+
+### 6.8 主要方法
+
+```rust
+impl HealthMonitor {
+    /// 创建新的健康监控器
+    pub fn new(config: HealthMonitorConfig) -> Self { ... }
+    
+    /// 注册集成进行监控
+    pub fn register(&self, id: &str) { ... }
+    
+    /// 取消注册集成
+    pub fn unregister(&self, id: &str) { ... }
+    
+    /// 报告健康检查成功
+    pub fn report_ok(&self, id: &str, tool_count: usize) { ... }
+    
+    /// 报告健康检查失败
+    pub fn report_error(&self, id: &str, error: String) { ... }
+    
+    /// 获取特定集成的健康状态
+    pub fn get_health(&self, id: &str) -> Option<IntegrationHealth> { ... }
+    
+    /// 获取所有集成的健康状态
+    pub fn all_health(&self) -> Vec<IntegrationHealth> { ... }
+    
+    /// 计算退避时间
+    pub fn backoff_duration(&self, attempt: u32) -> Duration { ... }
+    
+    /// 检查是否应该重连
+    pub fn should_reconnect(&self, id: &str) -> bool { ... }
+    
+    /// 标记为正在重连
+    pub fn mark_reconnecting(&self, id: &str) { ... }
+}
+```
+
+### 6.9 健康监控流程
+
+```mermaid
+flowchart TD
+    A[启动健康监控后台任务] --> B[遍历所有集成]
+    B --> C{检查健康状态}
+    C -->|Ready| D[等待下一次检查]
+    C -->|Error| E{should_reconnect?}
+    E -->|否| F[等待下一次检查]
+    E -->|是| G[计算退避时间]
+    G --> H[等待退避时间]
+    H --> I[尝试重连]
+    I --> J{重连成功?}
+    J -->|是| K[报告 OK]
+    J -->|否| L[报告 Error]
+    K --> D
+    L --> B
+```
+
+### 6.10 使用场景
+
+1. **集成状态监控**：实时了解每个 MCP 集成的健康状态
+2. **故障自动恢复**：当集成断开时自动尝试重连
+3. **系统 dashboard**：为管理界面提供健康状态数据
+4. **告警机制**：基于连续失败次数触发告警
+5. **集成可用性统计**：计算集成的 uptime 和可靠性
+
+### 6.11 安全特性
+
+- **线程安全**：使用 DashMap 实现并发安全的状态管理
+- **无阻塞设计**：后台任务不影响主系统性能
+- **资源限制**：最大重连次数和退避时间防止资源耗尽
+- **详细日志**：记录重连尝试和失败原因
+
+### 6.12 集成到 Kernel
+
+Health Monitor 被集成到 OpenFang Kernel 中：
+
+```rust
+// crates/openfang-kernel/src/kernel.rs
+pub struct OpenFangKernel {
+    // ...
+    pub extension_health: openfang_extensions::health::HealthMonitor,
+    // ...
+}
+
+// 初始化
+let health_config = openfang_extensions::health::HealthMonitorConfig {
+    auto_reconnect: true,
+    max_reconnect_attempts: 10,
+    max_backoff_secs: 300,
+    check_interval_secs: 60,
+};
+let extension_health = openfang_extensions::health::HealthMonitor::new(health_config);
+```
 
 ---
 

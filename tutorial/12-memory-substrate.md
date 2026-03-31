@@ -28,29 +28,37 @@
 
 OpenFang 的记忆系统采用三层架构设计，每层负责不同的存储和检索需求：
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    MemorySubstrate (统一 API)                │
-│  get/set/remember/recall/add_entity/query_graph/consolidate │
-└─────────────────────────────────────────────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        ▼                     ▼                     ▼
-┌───────────────┐   ┌─────────────────┐   ┌─────────────────┐
-│ Structured    │   │   Semantic      │   │   Knowledge     │
-│ Store         │   │   Store         │   │   Store         │
-│               │   │                 │   │                 │
-│ • KV 存储     │   │ • 向量搜索      │   │ • 实体图谱      │
-│ • Agent 持久化│   │ • 语义召回      │   │ • 关系查询      │
-│ • Session 管理│   │ • 余弦相似度    │   │ • 图模式匹配    │
-└───────────────┘   └─────────────────┘   └─────────────────┘
-        │                     │                     │
-        └─────────────────────┼─────────────────────┘
-                              ▼
-                    ┌─────────────────┐
-                    │  SQLite (单文件)│
-                    │  + WAL 模式     │
-                    └─────────────────┘
+```mermaid
+flowchart TD
+    subgraph MemorySubstrate[MemorySubstrate (统一 API)]
+        API[get/set/remember/recall/add_entity/query_graph/consolidate]
+    end
+    
+    API --> StructuredStore[Structured Store]
+    API --> SemanticStore[Semantic Store]
+    API --> KnowledgeStore[Knowledge Store]
+    
+    StructuredStore --> SQLite[SQLite (单文件 + WAL 模式)]
+    SemanticStore --> SQLite
+    KnowledgeStore --> SQLite
+    
+    subgraph StructuredDetails[Structured Store 详情]
+        KV[• KV 存储]
+        Agent[• Agent 持久化]
+        Session[• Session 管理]
+    end
+    
+    subgraph SemanticDetails[Semantic Store 详情]
+        Vector[• 向量搜索]
+        Semantic[• 语义召回]
+        Cosine[• 余弦相似度]
+    end
+    
+    subgraph KnowledgeDetails[Knowledge Store 详情]
+        Entity[• 实体图谱]
+        Relation[• 关系查询]
+        Pattern[• 图模式匹配]
+    end
 ```
 
 ### 三层职责对比
@@ -518,18 +526,24 @@ pub fn recall_with_embedding(
 
 ### 向量召回流程
 
-```
-1. 查询嵌入 → fetch_limit = limit * 10 (获取 10 倍候选)
-              ↓
-2. SQL 查询 → 基础过滤（deleted=0, agent_id, source 等）
-              ↓
-3. 解析片段 → 将数据库行转为 MemoryFragment
-              ↓
-4. 余弦排序 → 计算 query_embedding 与每个 fragment.embedding 的相似度
-              ↓
-5. 截断结果 → 取前 limit 个最高相似度的片段
-              ↓
-6. 更新计数 → access_count++ 和 accessed_at = now
+```mermaid
+flowchart TD
+    Start[开始召回]
+    Step1[1. 查询嵌入 → fetch_limit = limit * 10 (获取 10 倍候选)]
+    Step2[2. SQL 查询 → 基础过滤（deleted=0, agent_id, source 等）]
+    Step3[3. 解析片段 → 将数据库行转为 MemoryFragment]
+    Step4[4. 余弦排序 → 计算 query_embedding 与每个 fragment.embedding 的相似度]
+    Step5[5. 截断结果 → 取前 limit 个最高相似度的片段]
+    Step6[6. 更新计数 → access_count++ 和 accessed_at = now]
+    End[返回结果]
+    
+    Start --> Step1
+    Step1 --> Step2
+    Step2 --> Step3
+    Step3 --> Step4
+    Step4 --> Step5
+    Step5 --> Step6
+    Step6 --> End
 ```
 
 ---

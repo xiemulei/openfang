@@ -39,18 +39,32 @@
 
 ### 1.3 污点追踪与其他安全机制的关系
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    OpenFang 安全栈                        │
-├─────────────────────────────────────────────────────────┤
-│  输入层：路径遍历防护、SSRF 防护、Shell 元字符检测          │
-├─────────────────────────────────────────────────────────┤
-│  传播层：污点追踪、能力继承验证、RBAC 检查                  │
-├─────────────────────────────────────────────────────────┤
-│  输出层：Net Fetch 污点检查、Agent 消息 Secret 过滤        │
-├─────────────────────────────────────────────────────────┤
-│  审计层：Merkle 审计链、心跳监控、Prompt 注入扫描           │
-└─────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph SecurityStack[OpenFang 安全栈]
+        subgraph InputLayer[输入层]
+            I1[路径遍历防护]
+            I2[SSRF 防护]
+            I3[Shell 元字符检测]
+        end
+
+        subgraph PropagationLayer[传播层]
+            P1[污点追踪]
+            P2[能力继承验证]
+            P3[RBAC 检查]
+        end
+
+        subgraph OutputLayer[输出层]
+            O1[Net Fetch 污点检查]
+            O2[Agent 消息 Secret 过滤]
+        end
+
+        subgraph AuditLayer[审计层]
+            A1[Merkle 审计链]
+            A2[心跳监控]
+            A3[Prompt 注入扫描]
+        end
+    end
 ```
 
 **污点追踪位置**：传播层 + 输出层
@@ -452,16 +466,18 @@ fn check_taint_shell_exec(command: &str) -> Option<String> {
 2. **Layer 2**：启发式模式检测（管道 curl/wget、base64 解码、eval）
 
 **检测流程**：
-```
-命令输入
-    ↓
-Layer 1: contains_shell_metacharacters()
-    ↓ 发现元字符 → 立即阻断
-Layer 2: suspicious_patterns 匹配
-    ↓ 匹配成功 → 创建 TaintedValue
-check_sink(&TaintSink::shell_exec())
-    ↓ 有 ExternalNetwork 标签 → 阻断
-返回 None(通过) 或 Some(错误消息)
+```mermaid
+flowchart TD
+    Input[命令输入] --> Layer1[Layer 1: contains_shell_metacharacters()]
+    Layer1 -->|发现元字符| Block1[立即阻断]
+    Layer1 -->|无元字符| Layer2[Layer 2: suspicious_patterns 匹配]
+    Layer2 -->|匹配成功| CreateTainted[创建 TaintedValue]
+    CreateTainted --> CheckSink[check_sink(&TaintSink::shell_exec())]
+    CheckSink -->|有 ExternalNetwork 标签| Block2[阻断]
+    CheckSink -->|无阻断标签| Pass[返回 None(通过)]
+    Layer2 -->|无匹配| Pass
+    Block1 --> ReturnError[返回 Some(错误消息)]
+    Block2 --> ReturnError
 ```
 
 ### 6.2 Net Fetch 污点检查函数
@@ -783,10 +799,16 @@ if let Some(ssrf_error) = crate::ssrf_protection::check_ssrf(url) {
 
 ### 9.1 防御深度
 
-```
-输入 → [Shell 元字符检测] → [污点追踪] → [执行策略] → [沙箱隔离] → 执行
-       ↓                    ↓              ↓            ↓
-      阻断                 阻断           阻断         限制权限
+```mermaid
+flowchart TD
+    Input[输入] --> MetaCheck[Shell 元字符检测]
+    MetaCheck -->|阻断| Block1[阻断]
+    MetaCheck -->|通过| TaintCheck[污点追踪]
+    TaintCheck -->|阻断| Block2[阻断]
+    TaintCheck -->|通过| PolicyCheck[执行策略]
+    PolicyCheck -->|阻断| Block3[阻断]
+    PolicyCheck -->|通过| Sandbox[沙箱隔离]
+    Sandbox -->|限制权限| Execute[执行]
 ```
 
 ### 9.2 污点传播语义

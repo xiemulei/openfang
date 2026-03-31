@@ -118,6 +118,7 @@
 #### 工具执行与 Agent Loop
 - **嵌套 XML 工具调用恢复** (`agent_loop.rs`, +208 行): 修复 LLM 响应中嵌套 XML 格式的工具调用参数解析问题
 - **测试用例** (`agent_loop.rs`, +140 行): 添加 `test_nested_xml_text_tool_call_recovery_e2e` 端到端测试
+- **工具调用恢复增强** (`agent_loop.rs`): 支持 14 种工具调用格式，包括嵌套 XML 参数风格
 
 #### 搜索系统
 - **SearXNG Search Provider** (`web_search.rs`, +168 行): 隐私尊重型元搜索引擎，支持 30+ 搜索类别

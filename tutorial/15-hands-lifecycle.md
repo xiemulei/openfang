@@ -68,18 +68,12 @@ pub enum HandStatus {
 
 **状态流转**：
 
-```
-         ┌──────────────────────────────────────────┐
-         │                                          ▼
-   ┌─────────┐  pause   ┌─────────┐  resume  ┌─────────┐
-   │ Running │─────────▶│ Paused  │─────────▶│ Running │
-   └─────────┘          └─────────┘          └─────────┘
-       │  │                                     │
-       │  │ deactivate                          │ error
-       │  ▼                                     ▼
-       │  ┌─────────┐                     ┌─────────┐
-       └─▶│ Stopped │                     │  Error  │
-          └─────────┘                     └─────────┘
+```mermaid
+flowchart TD
+    Running[Running] -->|pause| Paused[Paused]
+    Paused -->|resume| Running
+    Running -->|deactivate| Stopped[Stopped]
+    Running -->|error| Error[Error]
 ```
 
 ---

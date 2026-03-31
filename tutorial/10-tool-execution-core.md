@@ -677,6 +677,48 @@ fn resolve_refs(obj: &serde_json::Map<String, serde_json::Value>) -> serde_json:
 | `web_fetch` | 获取 URL（SSRF 保护） | `url: string`, `method?: string`, `headers?: object`, `body?: string` |
 | `web_search` | 多 Provider 搜索 | `query: string`, `max_results?: integer` |
 
+#### 8.2.1 SearXNG 搜索支持 (v0.5.5 新增)
+
+**文件位置**: `crates/openfang-runtime/src/web_search.rs:327-435`
+
+SearXNG 是一个隐私尊重型元搜索引擎，支持 30+ 搜索类别，v0.5.5 版本新增了对它的支持：
+
+**配置示例**：
+
+```toml
+[web]
+search_provider = "Searxng"
+
+[web.searxng]
+url = "http://localhost:8080"  # 自托管 SearXNG 实例
+```
+
+**搜索类别**：
+- `general`: 通用搜索
+- `images`: 图片搜索
+- `news`: 新闻搜索
+- `videos`: 视频搜索
+- `map`: 地图搜索
+- `music`: 音乐搜索
+- `science`: 科学搜索
+- 等等
+
+**JSON 输出格式**：
+
+```json
+{
+  "query": "Rust lang",
+  "results": [
+    {
+      "title": "The Rust Programming Language",
+      "url": "https://www.rust-lang.org/",
+      "content": "A systems programming language that runs blazingly fast...",
+      "published_date": "2026-03-31"
+    }
+  ]
+}
+```
+
 ### 8.3 Shell 工具（1 个）
 
 | 工具名 | 说明 | 输入参数 |

@@ -389,6 +389,97 @@ pub struct DeliveryReceipt {
 
 ---
 
+## 9. DeliveryTracker — 送达回执追踪器 (v0.5.5 新增)
+
+### 文件位置
+`crates/openfang-kernel/src/kernel.rs:166-270`
+
+### 核心结构
+
+```rust
+/// Bounded in-memory delivery receipt tracker.
+/// Stores up to `MAX_RECEIPTS` most recent delivery receipts per agent.
+pub struct DeliveryTracker {
+    receipts: dashmap::DashMap<AgentId, Vec<openfang_channels::types::DeliveryReceipt>>,
+}
+```
+
+### 主要方法
+
+| 方法 | 说明 | 参数 |
+|------|------|------|
+| `new()` | 创建新的追踪器 | - |
+| `record()` | 记录送达回执 | `agent_id: AgentId`, `receipt: DeliveryReceipt` |
+| `get_receipts()` | 获取最近的回执 | `agent_id: AgentId`, `limit: usize` |
+| `sent_receipt()` | 创建已发送回执 | `channel: &str`, `recipient: &str` |
+| `failed_receipt()` | 创建失败回执 | `channel: &str`, `recipient: &str`, `error: &str` |
+
+### 实现细节
+
+```rust
+impl DeliveryTracker {
+    const MAX_RECEIPTS: usize = 10_000;  // 全局上限
+    const MAX_PER_AGENT: usize = 500;     // 每个 Agent 上限
+
+    /// Record a delivery receipt for an agent.
+    pub fn record(&self, agent_id: AgentId, receipt: openfang_channels::types::DeliveryReceipt) {
+        let mut entry = self.receipts.entry(agent_id).or_default();
+        entry.push(receipt);
+        // Per-agent cap
+        if entry.len() > Self::MAX_PER_AGENT {
+            let drain = entry.len() - Self::MAX_PER_AGENT;
+            entry.drain(..drain);
+        }
+        // Global cap: evict oldest agents' receipts if total exceeds limit
+        drop(entry);
+        let total: usize = self.receipts.iter().map(|e| e.value().len()).sum();
+        if total > Self::MAX_RECEIPTS {
+            // Simple eviction: remove oldest entries from first agent found
+            if let Some(mut oldest) = self.receipts.iter_mut().next() {
+                let to_remove = total - Self::MAX_RECEIPTS;
+                let drain = to_remove.min(oldest.value().len());
+                oldest.value_mut().drain(..drain);
+            }
+        }
+    }
+
+    /// Get recent delivery receipts for an agent (newest first).
+    pub fn get_receipts(
+        &self,
+        agent_id: AgentId,
+        limit: usize,
+    ) -> Vec<openfang_channels::types::DeliveryReceipt> {
+        self.receipts
+            .get(&agent_id)
+            .map(|entries| entries.iter().rev().take(limit).cloned().collect())
+            .unwrap_or_default()
+    }
+}
+```
+
+### 安全特性
+
+- **容量限制**: 全局最多 10,000 条回执，每个 Agent 最多 500 条
+- **自动清理**: 超出限制时自动清理最旧的回执
+- **数据脱敏**: `sanitize_recipient()` 方法避免 PII 日志泄露
+- **错误处理**: 错误信息最大 256 字符，移除控制字符
+
+### 使用场景
+
+1. **消息状态跟踪**: 追踪消息的发送状态和错误信息
+2. **故障排查**: 查看历史送达记录，诊断渠道问题
+3. **统计分析**: 分析消息成功率和渠道性能
+4. **用户反馈**: 向用户提供消息发送状态
+
+### 集成点
+
+- **ChannelAdapter**: 各渠道适配器发送消息后生成回执
+- **BridgeManager**: 统一收集和管理送达回执
+- **Kernel**: 通过 `delivery_tracker` 字段提供全局访问
+- **API**: 提供查询送达状态的端点
+
+---
+
 ## 9. ChannelStatus — 健康状态
 
 ### 文件位置

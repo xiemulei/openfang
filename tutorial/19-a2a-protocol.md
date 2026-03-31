@@ -257,12 +257,15 @@ pub enum A2aTaskStatusWrapper {
 
 ### 状态流转图
 
-```
-Submitted → Working → InputRequired → Working → Completed
-                      ↓                    ↓
-                  Working              Cancelled
-                                         ↓
-                                      Failed
+```mermaid
+graph TD
+    Submitted --> Working
+    Working --> InputRequired
+    InputRequired --> Working
+    Working --> Completed
+    InputRequired --> Working
+    Working --> Cancelled
+    Cancelled --> Failed
 ```
 
 ### 状态说明

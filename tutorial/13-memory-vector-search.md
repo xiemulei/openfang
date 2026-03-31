@@ -1,10 +1,11 @@
 # 第 13 节：记忆系统 — 向量搜索
 
-> **版本**: v0.5.2 (2026-03-29)
+> **版本**: v0.5.5 (2026-03-29)
 > **核心文件**:
 > - `crates/openfang-runtime/src/embedding.rs`
 > - `crates/openfang-memory/src/semantic.rs`
 > - `crates/openfang-memory/src/consolidation.rs`
+> - `crates/openfang-kernel/src/kernel.rs`
 
 ## 学习目标
 
@@ -292,6 +293,135 @@ pub fn create_embedding_driver(
 |------|----------|------|----------|
 | **本地** | `ollama`, `vllm`, `lmstudio` | 无需 API Key，数据不离本地 | 隐私敏感、开发测试 |
 | **外部** | `openai`, `groq`, `together` | 需要 API Key，高质量嵌入 | 生产环境、高精度需求 |
+
+---
+
+## 4. Embedding Driver Auto-detection — 嵌入驱动自动检测 (v0.5.5 新增)
+
+### 文件位置
+`crates/openfang-kernel/src/kernel.rs:849-953`
+
+### 核心功能
+
+自动检测并配置最适合的嵌入驱动，无需手动配置。系统会按照优先级顺序检查可用的 API Key 和本地服务，选择最优的嵌入提供者。
+
+### 实现代码
+
+```rust
+/// Auto-detect embedding driver configuration.
+async fn auto_detect_embedding_driver(&self) -> Result<Box<dyn EmbeddingDriver + Send + Sync>, OpenFangError> {
+    // 1. 按优先级检查云服务 API Key
+    let cloud_providers = [
+        ("openai", "OPENAI_API_KEY", "text-embedding-3-small"),
+        ("groq", "GROQ_API_KEY", "nomic-embed-text"),
+        ("mistral", "MISTRAL_API_KEY", "mistral-embed"),
+        ("together", "TOGETHER_API_KEY", "BAAI/bge-base-en-v1.5"),
+        ("fireworks", "FIREWORKS_API_KEY", "nomic-embed-text"),
+        ("cohere", "COHERE_API_KEY", "embed-english-v3.0"),
+    ];
+
+    for (provider, env_var, default_model) in &cloud_providers {
+        if let Ok(api_key) = std::env::var(env_var) {
+            if !api_key.is_empty() {
+                info!(provider = *provider, "Found API key for embedding provider");
+                return create_embedding_driver(provider, default_model, env_var, None)
+                    .map_err(|e| OpenFangError::Embedding(e.to_string()));
+            }
+        }
+    }
+
+    // 2. 检查本地服务
+    let local_providers = [
+        ("ollama", "nomic-embed-text"),
+        ("vllm", "text-embedding-3-small"),
+        ("lmstudio", "text-embedding-3-small"),
+    ];
+
+    for (provider, default_model) in &local_providers {
+        if self.check_local_service(provider).await {
+            info!(provider = *provider, "Found local embedding service");
+            return create_embedding_driver(provider, default_model, "", None)
+                .map_err(|e| OpenFangError::Embedding(e.to_string()));
+        }
+    }
+
+    // 3. 无可用驱动
+    Err(OpenFangError::Embedding(
+        "No embedding driver detected. Please set up an API key or start a local embedding service.".to_string(),
+    ))
+}
+
+/// Check if a local embedding service is available.
+async fn check_local_service(&self, provider: &str) -> bool {
+    let url = match provider {
+        "ollama" => "http://localhost:11434",
+        "vllm" => "http://localhost:8000",
+        "lmstudio" => "http://localhost:1234",
+        _ => return false,
+    };
+
+    let client = reqwest::Client::new();
+    match client.get(url).timeout(Duration::from_secs(2)).send().await {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => false,
+    }
+}
+```
+
+### 自动检测流程
+
+1. **云服务检查**（按优先级）：
+   - OpenAI (`OPENAI_API_KEY`)
+   - Groq (`GROQ_API_KEY`)
+   - Mistral (`MISTRAL_API_KEY`)
+   - Together (`TOGETHER_API_KEY`)
+   - Fireworks (`FIREWORKS_API_KEY`)
+   - Cohere (`COHERE_API_KEY`)
+
+2. **本地服务检查**：
+   - Ollama (localhost:11434)
+   - vLLM (localhost:8000)
+   - LM Studio (localhost:1234)
+
+3. **默认模型选择**：
+   - 每个提供者都有预配置的默认模型
+   - 确保最佳的嵌入质量和性能
+
+### 优先级顺序
+
+| 优先级 | 提供者 | 检查方式 | 特点 |
+|--------|--------|----------|------|
+| 1 | OpenAI | API Key | 高质量，广泛支持 |
+| 2 | Groq | API Key | 速度快，成本低 |
+| 3 | Mistral | API Key | 开源模型，平衡性能 |
+| 4 | Together | API Key | 多样化模型选择 |
+| 5 | Fireworks | API Key | 推理速度快 |
+| 6 | Cohere | API Key | 多语言支持 |
+| 7 | Ollama | 本地服务 | 隐私保护，无需网络 |
+| 8 | vLLM | 本地服务 | 高性能本地推理 |
+| 9 | LM Studio | 本地服务 | 易用性高 |
+
+### 错误处理
+
+- **无 API Key**：自动尝试本地服务
+- **本地服务不可用**：尝试下一个提供者
+- **全部失败**：返回明确的错误信息，指导用户设置 API Key 或启动本地服务
+
+### 安全特性
+
+- **零配置**：无需手动指定提供者和模型
+- **智能降级**：从云服务到本地服务的无缝降级
+- **隐私保护**：优先使用本地服务，数据不离本地
+- **性能优化**：选择最适合当前环境的提供者
+
+### 使用场景
+
+| 场景 | 自动选择 | 优势 |
+|------|----------|------|
+| **生产环境** | 云服务（OpenAI/Groq） | 高质量嵌入 |
+| **开发测试** | 本地服务（Ollama） | 快速迭代，无成本 |
+| **隐私敏感** | 本地服务 | 数据完全本地处理 |
+| **无网络环境** | 本地服务 | 离线可用 |
 
 ---
 
@@ -736,40 +866,20 @@ pub fn recall_with_embedding(
 
 ## 9. 向量召回完整流程
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│ 1. 用户查询："Rust 编程书籍推荐"                            │
-└─────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────┐
-│ 2. EmbeddingDriver.embed_one("Rust 编程书籍推荐")           │
-│    → POST https://api.openai.com/v1/embeddings              │
-│    → 返回：[0.023, -0.045, 0.089, ...] (1536 维)            │
-└─────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────┐
-│ 3. SQL 查询：SELECT * FROM memories WHERE deleted = 0       │
-│    AND agent_id = ? AND scope = 'episodic'                  │
-│    LIMIT 100 (fetch_limit = 10 × 10)                        │
-└─────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────┐
-│ 4. 对每个候选计算余弦相似度：                               │
-│    sim[0] = cosine_similarity(query_emb, candidates[0].emb) │
-│    sim[1] = cosine_similarity(query_emb, candidates[1].emb) │
-│    ...                                                      │
-└─────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────┐
-│ 5. 按相似度降序排序：                                       │
-│    [0.92, 0.87, 0.81, 0.76, 0.65, ...]                      │
-│    截取前 10 个                                              │
-└─────────────────────────────────────────────────────────────┘
-                          ↓
-┌─────────────────────────────────────────────────────────────┐
-│ 6. 返回结果并更新访问计数：                                 │
-│    UPDATE memories SET access_count++ WHERE id IN (...)     │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Step1[1. 用户查询："Rust 编程书籍推荐"]
+    Step2[2. EmbeddingDriver.embed_one\n→ POST https://api.openai.com/v1/embeddings\n→ 返回：[0.023, -0.045, 0.089, ...] (1536 维)]
+    Step3[3. SQL 查询：SELECT * FROM memories WHERE deleted = 0\nAND agent_id = ? AND scope = 'episodic'\nLIMIT 100 (fetch_limit = 10 × 10)]
+    Step4[4. 对每个候选计算余弦相似度：\nsim[0] = cosine_similarity(query_emb, candidates[0].emb)\nsim[1] = cosine_similarity(query_emb, candidates[1].emb)\n...]
+    Step5[5. 按相似度降序排序：\n[0.92, 0.87, 0.81, 0.76, 0.65, ...]\n截取前 10 个]
+    Step6[6. 返回结果并更新访问计数：\nUPDATE memories SET access_count++ WHERE id IN (...)]
+    
+    Step1 --> Step2
+    Step2 --> Step3
+    Step3 --> Step4
+    Step4 --> Step5
+    Step5 --> Step6
 ```
 
 ---
@@ -780,22 +890,30 @@ pub fn recall_with_embedding(
 
 ### 扩展架构
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    MemorySubstrate                          │
-└─────────────────────────────────────────────────────────────┘
-                          │
-        ┌─────────────────┼─────────────────┐
-        ▼                 ▼                 ▼
-┌───────────────┐ ┌───────────────┐ ┌───────────────┐
-│ Structured    │ │   Semantic    │ │   Knowledge   │
-│ Store (SQLite)│ │   Store       │ │   Store       │
-│               │ │               │ │               │
-│ • SQLite      │ │ • Phase 1:    │ │ • SQLite      │
-│ • KV 存储     │ │   SQLite BLOB │ │ • 实体图谱    │
-│               │ │ • Phase 2:    │ │               │
-│               │ │   Qdrant      │ │               │
-└───────────────┘ └───────────────┘ └───────────────┘
+```mermaid
+flowchart TD
+    subgraph MemorySubstrate[MemorySubstrate]
+        API[统一 API]
+    end
+    
+    API --> StructuredStore[Structured Store (SQLite)]
+    API --> SemanticStore[Semantic Store]
+    API --> KnowledgeStore[Knowledge Store]
+    
+    subgraph StructuredDetails[Structured Store 详情]
+        S1[• SQLite]
+        S2[• KV 存储]
+    end
+    
+    subgraph SemanticDetails[Semantic Store 详情]
+        SM1[• Phase 1: SQLite BLOB]
+        SM2[• Phase 2: Qdrant]
+    end
+    
+    subgraph KnowledgeDetails[Knowledge Store 详情]
+        K1[• SQLite]
+        K2[• 实体图谱]
+    end
 ```
 
 ### Qdrant 集成代码示例（伪代码）
