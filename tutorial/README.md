@@ -1,6 +1,6 @@
 # OpenFang 学习笔记 — 25 节完整教程
 
-> **版本**: v0.5.2 (2026-03-29)
+> **版本**: v0.5.5 (2026-03-31)
 > **状态**: ✅ 全部完成
 > **总计**: 14 Crates, 145K+ LOC, 1767+ Tests, 25 节教程
 
@@ -107,6 +107,40 @@
 | 2026-03-16 | 添加 Hands 系统第 14-15 节、更新版本到 v0.4.4 | 14-hands-config.md, 15-hands-lifecycle.md |
 | 2026-03-19 | 更新到 v0.4.9: 新增企业微信渠道、图片生成流水线、Agent 重启等 | 本文件、01/16/24 节 |
 | 2026-03-29 | 更新到 v0.5.2: 合并 main 分支，大幅更新教程内容 | 全部教程 |
+| 2026-03-31 | 更新到 v0.5.5: SearXNG 搜索、嵌套 XML 修复、Agent 技能重载 | 本文件、10/22/24 节 |
+
+---
+
+## v0.5.2 → v0.5.5 版本变更摘要
+
+### 核心架构变更
+
+#### 工具执行与 Agent Loop
+- **嵌套 XML 工具调用恢复** (`agent_loop.rs`, +208 行): 修复 LLM 响应中嵌套 XML 格式的工具调用参数解析问题
+- **测试用例** (`agent_loop.rs`, +140 行): 添加 `test_nested_xml_text_tool_call_recovery_e2e` 端到端测试
+
+#### 搜索系统
+- **SearXNG Search Provider** (`web_search.rs`, +168 行): 隐私尊重型元搜索引擎，支持 30+ 搜索类别
+- **SearXNG 搜索技能** (`bundled/searxng/SKILL.md`, 70 行新增): 内置隐私搜索专家技能
+- **分页与类别支持** (`web_search.rs`): SearXNG 分页、动态类别验证、噪音字段过滤
+- **JSON 输出格式**: 仅向 LLM 暴露 title/url/content/published_date
+
+#### Agent 系统
+- **Agent Skills 热重载** (`kernel.rs`, +5 行): 检测技能配置变更时自动重载
+- **测试覆盖** (`integration_test.rs`, +36 行): agent skills/mcp_servers TOML 解析测试
+
+#### 安全与配置
+- **SSRF Allowlist** (`config.rs`, +10 行): `ssrf_allowed_hosts` 配置，支持自托管 K8s 环境
+- **Ollama 上下文提升**: 默认 128K 上下文 / 16K 输出
+- **Embedding 自动检测扩展**: OpenAI, Groq, Mistral, Together, Fireworks, Cohere, 本地 providers
+
+### 新增依赖
+- 无新增外部依赖（SearXNG 使用现有 HTTP 客户端）
+
+### 统计
+- **5 个文件变更**: +275/-4 行 (SearXNG 相关)
+- **3 个文件变更**: +41/-1 行 (Agent skills reload)
+- **213 行变更**: 嵌套 XML 工具调用恢复
 
 ---
 

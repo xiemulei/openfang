@@ -1,9 +1,10 @@
 # 第 10 节：工具执行 — 核心流程
 
-> **版本**: v0.5.2 (2026-03-29)
+> **版本**: v0.5.5 (2026-03-31)
 > **核心文件**:
 > - `crates/openfang-runtime/src/tool_runner.rs`
 > - `crates/openfang-types/src/tool.rs`
+> - `crates/openfang-runtime/src/agent_loop.rs` (嵌套 XML 恢复)
 
 ## 学习目标
 
@@ -964,6 +965,72 @@ match result {
 
 ---
 
+## 10. 嵌套 XML 工具调用恢复 (v0.5.5 新增)
+
+### 10.1 问题背景
+
+LLM 有时会生成嵌套 XML 格式的工具调用，例如：
+
+```xml
+<tool_use>
+  <name>web_search</name>
+  <id>search_123</id>
+  <query>
+    <question>What is Rust?</question>
+    <max_results>5</max_results>
+  </query>
+</tool_use>
+```
+
+传统解析逻辑只能处理扁平结构，导致参数提取失败。
+
+### 10.2 恢复逻辑
+
+**文件位置**: `crates/openfang-runtime/src/agent_loop.rs:213-218`
+
+```rust
+/// Extract nested XML tool call parameters.
+///
+/// When the LLM wraps tool call XML inside a text block,
+/// recursively search for <tool_use> tags and parse them.
+fn recover_nested_xml_tool_call(text: &str) -> Option<ToolCall> {
+    // 递归查找 <tool_use> 标签
+    if let Some(start) = text.find("<tool_use>") {
+        if let Some(end) = text.rfind("</tool_use>") {
+            let tool_xml = &text[start..end + "</tool_use>".len()];
+            return parse_tool_call(tool_xml);
+        }
+    }
+    None
+}
+```
+
+### 10.3 测试覆盖
+
+**文件位置**: `crates/openfang-runtime/src/agent_loop.rs:26000+`
+
+```rust
+#[test]
+fn test_nested_xml_text_tool_call_recovery_e2e() {
+    // 端到端测试：验证 Agent Loop 能从嵌套 XML 中恢复工具调用
+    let manifest = test_manifest();
+    let driver: Arc<dyn LlmDriver> = Arc::new(NestedXmlTextToolCallDriver::new());
+    
+    let result = run_agent_loop(...).await;
+    
+    // 验证工具被正确调用
+    assert!(result.response.contains("Search results"));
+}
+```
+
+### 10.4 设计意图
+
+- **容错性**: LLM 输出不完美时，系统尝试恢复而非直接失败
+- **向后兼容**: 不影响现有扁平 XML 工具调用
+- **测试驱动**: 端到端测试确保恢复逻辑有效
+
+---
+
 ## 完成检查清单
 
 - [ ] 理解 execute_tool 函数签名和参数
@@ -981,4 +1048,4 @@ match result {
 ---
 
 *创建时间：2026-03-15*
-*OpenFang v0.5.2*
+*OpenFang v0.5.5*

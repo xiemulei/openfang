@@ -1,6 +1,6 @@
 # 第 22 节：Skills 系统 — 技能市场
 
-> **版本**: v0.5.2 (2026-03-29)
+> **版本**: v0.5.5 (2026-03-31)
 > **核心文件**:
 > - `crates/openfang-skills/src/lib.rs` (类型定义)
 > - `crates/openfang-skills/src/registry.rs` (技能注册表)
@@ -297,17 +297,63 @@ description: "WebAssembly expert for WASI, component model, Rust/C compilation, 
 
 A systems programmer and runtime specialist with deep expertise in WebAssembly...
 
+
+### 3.4 示例：searxng (v0.5.5 新增)
+
+**文件位置**: `crates/openfang-skills/bundled/searxng/SKILL.md`
+
+```markdown
+---
+name: searxng
+description: Privacy-respecting metasearch specialist using SearXNG instances
+---
+# SearXNG Search Specialist
+
+You are a privacy-respecting web search specialist using SearXNG, a self-hosted metasearch engine that aggregates results from multiple search engines without tracking.
+
 ## Key Principles
 
-- WebAssembly provides a portable, sandboxed execution environment
-- Target wasm32-wasi for server-side and CLI applications
-- Use the Component Model and WIT for language-agnostic composition
-...
+- Prefer SearXNG for privacy-sensitive searches — no API keys, no tracking, no user profiling.
+- Always cite sources with URLs so the user can verify information.
+- Prefer primary sources (official docs, research papers) over secondary ones (blog posts, forums).
+- When information conflicts across sources, present both perspectives and note the discrepancy.
+- State the date of information when recency matters.
 
-## Techniques
+## SearXNG Capabilities
 
-- Compile Rust to Wasm with wasm-pack for browser targets
-- Use wasm-bindgen to expose Rust functions to JavaScript
+SearXNG supports 30+ search categories. Use the right category for the task:
+
+| Category | Use Case |
+|----------|----------|
+| `general` | Default web search |
+| `images` | Image search |
+| `news` | News articles |
+| `videos` | Video results |
+| `it` | IT and programming |
+| `science` | Scientific content |
+| `q&a` | Q&A sites (Stack Overflow, etc.) |
+| `social media` | Social media posts |
+
+## Search Techniques
+
+- **Category selection**: Always specify a category when the topic is clear
+- **Engine syntax**: SearXNG supports `!engine` syntax to target specific engines
+- **Site search**: Use `site:example.com` in queries to search within a specific domain
+- **Exact phrases**: Use quotes for exact phrase matching
+```
+
+**配置位置**: `crates/openfang-types/src/config.rs`
+
+```toml
+[searxng]
+url = "https://searxng.example.com"
+categories = ["general", "it", "science"]
+max_results = 10
+```
+
+### 3.5 示例：wasm-expert (续)
+
+**文件位置**: `crates/openfang-skills/bundled/wasm-expert/SKILL.md`
 ...
 
 ## Common Patterns
@@ -1101,6 +1147,47 @@ fn test_scan_prompt_injection() {
 
 ---
 
+## 8. Agent Skills 热重载 (v0.5.5 新增)
+
+### 8.1 问题背景
+
+在 v0.5.5 之前，当 Agent 配置文件中的 `skills` 或 `mcp_servers` 字段变更时，需要重启 Agent 才能生效。
+
+### 8.2 热重载逻辑
+
+**文件位置**: `crates/openfang-kernel/src/kernel.rs:550-570`
+
+```rust
+// 检测配置变更并自动重载
+if skills_changed || mcp_servers_changed {
+    info!("Detected skill/mcp config change, reloading...");
+    self.registry.update_skills(agent_id, new_skills)
+        .map_err(KernelError::OpenFang)?;
+    // MCP 连接也会相应更新
+}
+```
+
+### 8.3 测试覆盖
+
+**文件位置**: `crates/openfang-kernel/tests/integration_test.rs`
+
+```rust
+#[test]
+fn test_agent_skills_reload() {
+    // 验证 skills/mcp_servers TOML 解析
+    // 验证变更检测触发重载
+    assert!(skills_reloaded);
+}
+```
+
+### 8.4 设计意图
+
+- **开发体验**: 修改配置无需重启 Agent
+- **生产环境**: 动态调整技能无需中断服务
+- **配置同步**: Skills 和 MCP 连接保持一致
+
+---
+
 ## 完成检查清单
 
 - [ ] 理解 Skills 系统架构和运行时类型
@@ -1118,4 +1205,4 @@ fn test_scan_prompt_injection() {
 ---
 
 *创建时间：2026-03-15*
-*OpenFang v0.5.2*
+*OpenFang v0.5.5*
